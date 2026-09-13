@@ -47,7 +47,7 @@ const toastEl = document.getElementById('toast');
 
 let world = loadWorld();
 let mode = 'create';
-let tool = 'path';
+let tool = 'select';
 let layerId = world.start.layerId;
 let selection = null;
 let hover = null;
@@ -419,7 +419,7 @@ function refreshProps() {
 
   const toolsHelp = {
     select: '扉・階段をクリックして編集します。Delete で削除、Ctrl+Z で元に戻します。',
-    path: 'ドラッグして廊下手前の道を描きます。同じ道が扉で区切られていない限り、進入時にまとめて開示されます。',
+    path: 'ドラッグして通路を描きます。同じ通路が扉で区切られていない限り、進入時にまとめて開示されます。',
     room: 'ドラッグして矩形の部屋を置きます。部屋はひとつの区画としてマスク解除されます。',
     spawn: 'プレイ開始位置をクリックして指定します。',
     erase: 'ドラッグしてマスを空にします。そのマスの階段や隣接する扉も消えます。',
@@ -501,11 +501,8 @@ function linkNewLayer(stairs, kind) {
   toast(`${name} を追加して接続しました`);
 }
 
-function refreshHint() {
-  if (mode === 'play') {
-    hintEl.textContent = 'WASD で移動　F で扉　階段に乗ると階層移動';
-    return;
-  }
+function hintText() {
+  if (mode === 'play') return 'WASD で移動　F で扉　階段に乗ると階層移動';
   const map = {
     select: 'クリックで選択　Delete 削除　Ctrl+Z 取り消し',
     path: 'ドラッグで道を描く',
@@ -515,7 +512,12 @@ function refreshHint() {
     spawn: 'クリックで開始位置',
     erase: 'ドラッグで消去',
   };
-  hintEl.textContent = map[tool] || '';
+  const pos = hover ? `　(${hover.x}, ${hover.y})` : '';
+  return (map[tool] || '') + pos;
+}
+
+function refreshHint() {
+  hintEl.textContent = hintText();
 }
 
 function refreshBadge() {
@@ -720,6 +722,7 @@ function onMove(e) {
   }
   const c = clampHover(pointerCell(e));
   hover = c;
+  refreshHint();
   if (mode === 'play' || !c) return;
   if (painting) paintAt(c.x, c.y);
   if (dragRect) {
@@ -926,7 +929,20 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 canvas.addEventListener('wheel', onWheel, { passive: false });
 window.addEventListener('resize', resizeCanvas);
 
-const toolKeys = { q: 'select', e: 'room', r: 'door', t: 'stairs', x: 'erase' };
+const toolKeys = {
+  q: 'select',
+  e: 'room',
+  r: 'door',
+  t: 'stairs',
+  x: 'erase',
+  1: 'select',
+  2: 'path',
+  3: 'room',
+  4: 'door',
+  5: 'stairs',
+  6: 'spawn',
+  7: 'erase',
+};
 
 window.addEventListener('keydown', (e) => {
   if (e.target.matches('input, select, textarea')) return;
@@ -945,10 +961,6 @@ window.addEventListener('keydown', (e) => {
   }
   if (mode === 'create' && toolKeys[e.key.toLowerCase()]) {
     setTool(toolKeys[e.key.toLowerCase()]);
-    return;
-  }
-  if (mode === 'create' && e.key.toLowerCase() === 'w' && !e.repeat) {
-    setTool('path');
     return;
   }
   const map = { w: 'n', a: 'w', s: 's', d: 'e', ArrowUp: 'n', ArrowLeft: 'w', ArrowDown: 's', ArrowRight: 'e' };

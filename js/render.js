@@ -210,23 +210,22 @@ function drawStairs(ctx, st) {
       ctx.stroke();
     }
   } else {
-    ctx.fillStyle = st.style === 'up' ? '#8a7a62' : '#5a4e40';
-    ctx.strokeStyle = '#2a241c';
-    ctx.lineWidth = 1;
-    const steps = 5;
-    for (let i = 0; i < steps; i++) {
-      const t = i / steps;
-      const w = CS - 12 - t * 10;
-      const h = 5;
-      const sx = x + (CS - w) / 2;
-      const sy = y + 8 + i * 5;
-      ctx.fillRect(sx, sy, w, h);
-      ctx.strokeRect(sx, sy, w, h);
+    ctx.fillStyle = '#2a241c';
+    ctx.strokeStyle = '#d4b483';
+    ctx.lineWidth = 1.5;
+    ctx.fillRect(x + 6, y + 6, CS - 12, CS - 12);
+    ctx.strokeRect(x + 6.5, y + 6.5, CS - 13, CS - 13);
+    const up = st.style === 'up';
+    ctx.fillStyle = '#7a6d5a';
+    for (let i = 0; i < 4; i++) {
+      const inset = up ? i * 3.2 : (3 - i) * 3.2;
+      ctx.fillRect(x + 10 + inset / 2, y + 11 + i * 5, CS - 20 - inset, 3.5);
     }
-    ctx.fillStyle = '#d4b483';
-    ctx.font = '9px sans-serif';
+    ctx.fillStyle = '#efe7d8';
+    ctx.font = 'bold 11px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(st.style === 'up' ? '▲' : '▼', x + CS / 2, y + 12);
+    ctx.textBaseline = 'middle';
+    ctx.fillText(up ? '上' : '下', x + CS / 2, y + CS / 2 + 8);
   }
   ctx.restore();
 }
@@ -309,8 +308,10 @@ export function render(ctx, {
     ? (x, y) => isRegionRevealed(world, layer, x, y)
     : null;
 
-  ctx.fillStyle = '#1b1713';
-  ctx.fillRect(-2, -2, layer.width * CS + 4, layer.height * CS + 4);
+  if (!fogFn) {
+    ctx.fillStyle = '#1b1713';
+    ctx.fillRect(-2, -2, layer.width * CS + 4, layer.height * CS + 4);
+  }
 
   for (let y = 0; y < layer.height; y++) {
     for (let x = 0; x < layer.width; x++) {
