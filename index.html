@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>道連れ語り — 迷宮図</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect fill='%23110e0b' width='16' height='16'/><path fill='%23d4b483' d='M3 13h10v1H3zM4 4h8v8H4z'/><path fill='%23110e0b' d='M6 6h4v2H6z'/></svg>" />
+  <link rel="stylesheet" href="css/app.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div class="brand-text">
+          <strong>道連れ語り</strong>
+          <span>迷宮図</span>
+        </div>
+      </div>
+
+      <div class="mode-switch" role="tablist" aria-label="モード">
+        <button type="button" id="btn-create" class="is-active" data-mode="create">クリエイト</button>
+        <button type="button" id="btn-play" data-mode="play">プレイ</button>
+      </div>
+
+      <div class="top-actions">
+        <span id="save-status" class="save-status" title="このブラウザに自動保存されます">保存済み</span>
+        <button type="button" id="btn-reset-play" class="ghost">探索リセット</button>
+        <button type="button" id="btn-load-sample" class="ghost">サンプル</button>
+        <button type="button" id="btn-new-map" class="ghost danger">新規</button>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <aside class="sidebar sidebar-left">
+        <section class="panel">
+          <header class="panel-h">
+            <h2>レイヤー</h2>
+            <div class="row-btns">
+              <button type="button" id="btn-add-floor" class="icon-btn" title="階層を追加">＋階</button>
+              <button type="button" id="btn-add-place" class="icon-btn" title="別の場所を追加">＋場所</button>
+            </div>
+          </header>
+          <ul id="layer-list" class="layer-list"></ul>
+        </section>
+
+        <section class="panel" id="tools-panel">
+          <header class="panel-h"><h2>ツール</h2></header>
+          <div class="tool-grid" id="tool-grid">
+            <button type="button" class="tool is-active" data-tool="select" title="選択 (Q)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3l14 11-6 1 3 7-3 1-3-7-5 4z" /></svg>
+              <span>選択</span>
+            </button>
+            <button type="button" class="tool" data-tool="path" title="道 (W)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 3h4v6h7v4h-7v8h-4v-8H3V9h7z" /></svg>
+              <span>道</span>
+            </button>
+            <button type="button" class="tool" data-tool="room" title="部屋 (E)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zm2 2v12h12V6z" /></svg>
+              <span>部屋</span>
+            </button>
+            <button type="button" class="tool" data-tool="door" title="扉 (R)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18H6zm8 8a1.2 1.2 0 110 2.4A1.2 1.2 0 0114 11z" /></svg>
+              <span>扉</span>
+            </button>
+            <button type="button" class="tool" data-tool="stairs" title="階段 (T)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18h6v-4h4V10h4V6h2v6h-4v4h-4v4H4z" /></svg>
+              <span>階段</span>
+            </button>
+            <button type="button" class="tool" data-tool="spawn" title="開始位置">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 21V4l12 7-8 1v9z" /></svg>
+              <span>開始</span>
+            </button>
+            <button type="button" class="tool" data-tool="erase" title="消去 (X)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4l5 5-9 9H6v-5z" /></svg>
+              <span>消去</span>
+            </button>
+          </div>
+          <label class="check-row" id="mask-preview-row">
+            <input type="checkbox" id="chk-mask-preview" />
+            <span>探索マスクをプレビュー</span>
+          </label>
+        </section>
+
+        <section class="panel play-only hidden" id="play-help">
+          <header class="panel-h"><h2>操作</h2></header>
+          <ul class="help-list">
+            <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> マス移動</li>
+            <li><kbd>F</kbd> 正面の扉を開閉</li>
+            <li>階段・転移門は乗ると移動</li>
+            <li>区画に入るとマスクがまとめて外れる</li>
+          </ul>
+        </section>
+      </aside>
+
+      <main class="stage">
+        <canvas id="map"></canvas>
+        <div id="stage-hint" class="stage-hint"></div>
+        <div id="floor-badge" class="floor-badge"></div>
+      </main>
+
+      <aside class="sidebar sidebar-right">
+        <section class="panel">
+          <header class="panel-h"><h2 id="props-title">プロパティ</h2></header>
+          <div id="props" class="props"></div>
+        </section>
+      </aside>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status"></div>
+
+  <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <p id="modal-text"></p>
+      <div class="modal-actions">
+        <button type="button" id="modal-cancel" class="ghost">やめる</button>
+        <button type="button" id="modal-ok">実行</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
