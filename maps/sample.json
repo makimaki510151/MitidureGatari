@@ -217,7 +217,7 @@
           0,
           0,
           1,
-          0,
+          1,
           0,
           0,
           0,
@@ -239,7 +239,7 @@
           0,
           0,
           1,
-          0,
+          1,
           0,
           0,
           0,
@@ -405,6 +405,17 @@
           "hinge": "a",
           "defaultOpen": false,
           "hidden": true
+        },
+        {
+          "id": "D-sweep",
+          "x": 10,
+          "y": 10,
+          "side": "w",
+          "appearance": "sweep",
+          "swing": "e",
+          "hinge": "a",
+          "defaultOpen": false,
+          "hidden": false
         }
       ],
       "stairs": [
