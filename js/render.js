@@ -375,6 +375,22 @@ function drawPlayer(ctx, x, y, facing) {
   ctx.restore();
 }
 
+function drawMark(ctx, mark) {
+  const x = mark.x * CS + CS / 2;
+  const y = mark.y * CS + CS / 2;
+  ctx.save();
+  ctx.font = 'bold 18px "Yu Mincho", "YuMincho", "Hiragino Mincho ProN", "Noto Serif JP", serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 3.5;
+  ctx.strokeStyle = 'rgba(16, 14, 12, 0.8)';
+  ctx.fillStyle = '#efe7d8';
+  ctx.strokeText(mark.ch, x, y);
+  ctx.fillText(mark.ch, x, y);
+  ctx.restore();
+}
+
 function doorVisible(world, layer, door, useFog) {
   if (!useFog) return true;
   const a = { x: door.x, y: door.y };
@@ -455,6 +471,12 @@ export function render(ctx, {
     drawStairs(ctx, st);
   }
 
+  for (const mark of layer.marks || []) {
+    if (fogFn && !fogFn(mark.x, mark.y)) continue;
+    if (layer.cells[mark.y]?.[mark.x] === CELL.VOID) continue;
+    drawMark(ctx, mark);
+  }
+
   if (mode === 'create' && world.start.layerId === layer.id) {
     drawSpawn(ctx, world.start.x, world.start.y);
   }
@@ -481,6 +503,8 @@ export function render(ctx, {
     ctx.setLineDash([4, 3]);
     ctx.lineWidth = 1.5;
     if (selection.type === 'stairs') {
+      ctx.strokeRect(selection.x * CS + 3, selection.y * CS + 3, CS - 6, CS - 6);
+    } else if (selection.type === 'mark') {
       ctx.strokeRect(selection.x * CS + 3, selection.y * CS + 3, CS - 6, CS - 6);
     } else if (selection.type === 'door') {
       const d = selection.door;

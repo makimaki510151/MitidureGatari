@@ -347,6 +347,12 @@ kbd {
   font: inherit;
   font-size: 13px;
 }
+.props #draft-mark,
+.props #mark-ch {
+  font-size: 22px;
+  text-align: center;
+  letter-spacing: 0.08em;
+}
 .props .row {
   display: grid;
   grid-template-columns: 1fr 1fr;
