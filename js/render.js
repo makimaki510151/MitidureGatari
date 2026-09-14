@@ -4,6 +4,7 @@ import {
   DIRS,
   DOOR_LOOKS,
   STAIR_STYLES,
+  doorInFront,
   getLayer,
   isWalkable,
   isDoorOpen,
@@ -396,6 +397,24 @@ export function render(ctx, {
 
   if (mode === 'play' && world.play.layerId === layer.id) {
     drawPlayer(ctx, world.play.x, world.play.y, world.play.facing);
+    const faceDoor = doorInFront(layer, world.play.x, world.play.y, world.play.facing);
+    if (faceDoor) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(16, 14, 12, 0.86)';
+      ctx.strokeStyle = '#d4b483';
+      ctx.lineWidth = 1.2;
+      const px = world.play.x * CS + CS / 2;
+      const py = world.play.y * CS - 6;
+      roundRect(ctx, px - 16, py - 14, 32, 16, 3);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#d4b483';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('F 開閉', px, py - 6);
+      ctx.restore();
+    }
   }
 
   ctx.restore();
