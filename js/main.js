@@ -933,7 +933,10 @@ function fillJsonEditor() {
 function openJsonModal() {
   fillJsonEditor();
   document.getElementById('json-modal').classList.remove('hidden');
-  document.getElementById('json-text').focus();
+  const ta = document.getElementById('json-text');
+  ta.scrollTop = 0;
+  ta.focus();
+  ta.setSelectionRange(0, 0);
 }
 
 function closeJsonModal() {

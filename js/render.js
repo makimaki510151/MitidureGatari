@@ -102,19 +102,24 @@ function drawDoor(ctx, door, open, { createMark = false } = {}) {
     }
     if (createMark) {
       ctx.save();
-      ctx.fillStyle = 'rgba(212, 180, 131, 0.92)';
-      ctx.strokeStyle = '#1a1612';
-      ctx.lineWidth = 1;
       const mx = door.side === 'n' ? x + CS / 2 : x;
       const my = door.side === 'n' ? y : y + CS / 2;
+      ctx.fillStyle = '#d4b483';
+      ctx.strokeStyle = '#efe7d8';
+      ctx.lineWidth = 1.4;
       ctx.beginPath();
-      ctx.moveTo(mx, my - 5);
-      ctx.lineTo(mx + 4, my);
-      ctx.lineTo(mx, my + 5);
-      ctx.lineTo(mx - 4, my);
+      ctx.moveTo(mx, my - 8);
+      ctx.lineTo(mx + 7, my);
+      ctx.lineTo(mx, my + 8);
+      ctx.lineTo(mx - 7, my);
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillStyle = '#efe7d8';
+      ctx.fillText('隠', mx, my - 10);
       ctx.restore();
     }
     return;
