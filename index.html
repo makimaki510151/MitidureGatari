@@ -25,6 +25,7 @@
 
       <div class="top-actions">
         <span id="save-status" class="save-status" title="このブラウザに自動保存されます">保存済み</span>
+        <button type="button" id="btn-json" class="ghost">JSON</button>
         <button type="button" id="btn-reset-play" class="ghost">探索リセット</button>
         <button type="button" id="btn-load-sample" class="ghost">サンプル</button>
         <button type="button" id="btn-new-map" class="ghost danger">新規</button>
@@ -86,9 +87,10 @@
           <header class="panel-h"><h2>操作</h2></header>
           <ul class="help-list">
             <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> マス移動</li>
-            <li><kbd>F</kbd> 正面の扉を開閉</li>
+            <li><kbd>F</kbd> 正面の扉を開閉（隠し扉も調べられる）</li>
             <li>階段・転移門は乗ると移動</li>
             <li>区画に入るとマスクがまとめて外れる</li>
+            <li><kbd>Esc</kbd> クリエイトに戻る</li>
           </ul>
         </section>
       </aside>
@@ -97,6 +99,11 @@
         <canvas id="map" tabindex="0"></canvas>
         <div id="stage-hint" class="stage-hint"></div>
         <div id="floor-badge" class="floor-badge"></div>
+        <div id="play-hud" class="play-hud hidden">
+          <button type="button" id="btn-exit-play">クリエイト</button>
+          <button type="button" id="btn-play-fs">全画面</button>
+          <button type="button" id="btn-reset-play-hud">探索リセット</button>
+        </div>
       </main>
 
       <aside class="sidebar sidebar-right">
@@ -116,6 +123,29 @@
       <div class="modal-actions">
         <button type="button" id="modal-cancel" class="ghost">やめる</button>
         <button type="button" id="modal-ok">実行</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="json-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="json-title">
+    <div class="modal-card json-card">
+      <header class="json-head">
+        <h2 id="json-title">マップJSON</h2>
+        <label class="check-row" style="margin:0">
+          <input type="checkbox" id="json-include-play" />
+          <span>探索状況も含める</span>
+        </label>
+      </header>
+      <p class="json-help">書き出したJSONは読み込み・編集して、クリエイトとプレイの両方で使えます。</p>
+      <textarea id="json-text" spellcheck="false" aria-label="マップJSON"></textarea>
+      <div class="modal-actions json-actions">
+        <input type="file" id="json-file" accept="application/json,.json" hidden />
+        <button type="button" id="json-load" class="ghost">ファイル読込</button>
+        <button type="button" id="json-download" class="ghost">ファイル保存</button>
+        <button type="button" id="json-copy" class="ghost">コピー</button>
+        <span class="json-spacer"></span>
+        <button type="button" id="json-cancel" class="ghost">閉じる</button>
+        <button type="button" id="json-apply">適用して使う</button>
       </div>
     </div>
   </div>
