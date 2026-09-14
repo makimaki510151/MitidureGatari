@@ -421,6 +421,7 @@ export function createDefaultWorld() {
   fillRect(f1, 8, 0, 3, 2, CELL.ROOM);
   f1.cells[9][10] = CELL.PATH;
   f1.cells[10][10] = CELL.PATH;
+  fillRect(f1, 11, 9, 3, 3, CELL.ROOM);
 
   placeDoor(f1, 9, 12, 'n', { id: 'D-ent', appearance: 'wood', swing: 's', hinge: 'a' });
   placeDoor(f1, 3, 6, 'w', { id: 'D-west', appearance: 'iron', swing: 'w', hinge: 'a' });
