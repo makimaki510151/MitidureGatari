@@ -6,8 +6,9 @@ import {
   STAIR_STYLES,
   doorInFront,
   getLayer,
-  isWalkable,
   isDoorOpen,
+  isSecretDoor,
+  isWalkable,
   isRegionRevealed,
   stairsAt,
 } from './world.js';
@@ -87,10 +88,39 @@ function drawWalls(ctx, layer, x, y, fogFn) {
   if (wallOn(layer, x, y, 'e', fogFn)) ctx.fillRect(px + CS - t / 2, py - 1, t, CS + 2);
 }
 
-function drawDoor(ctx, door, open) {
-  const pal = DOOR_LOOKS[door.appearance] || DOOR_LOOKS.wood;
+function drawDoor(ctx, door, open, { createMark = false } = {}) {
+  const secret = isSecretDoor(door);
   const x = door.x * CS;
   const y = door.y * CS;
+
+  if (secret) {
+    if (!open) {
+      ctx.fillStyle = '#1a1612';
+      const t = 5;
+      if (door.side === 'n') ctx.fillRect(x - 1, y - t / 2, CS + 2, t);
+      else ctx.fillRect(x - t / 2, y - 1, t, CS + 2);
+    }
+    if (createMark) {
+      ctx.save();
+      ctx.fillStyle = 'rgba(212, 180, 131, 0.92)';
+      ctx.strokeStyle = '#1a1612';
+      ctx.lineWidth = 1;
+      const mx = door.side === 'n' ? x + CS / 2 : x;
+      const my = door.side === 'n' ? y : y + CS / 2;
+      ctx.beginPath();
+      ctx.moveTo(mx, my - 5);
+      ctx.lineTo(mx + 4, my);
+      ctx.lineTo(mx, my + 5);
+      ctx.lineTo(mx - 4, my);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+    return;
+  }
+
+  const pal = DOOR_LOOKS[door.appearance] || DOOR_LOOKS.wood;
   ctx.save();
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
@@ -347,7 +377,7 @@ export function render(ctx, {
 
   for (const door of layer.doors) {
     if (!doorVisible(world, layer, door, !!fogFn)) continue;
-    drawDoor(ctx, door, isDoorOpen(world, door));
+    drawDoor(ctx, door, isDoorOpen(world, door), { createMark: mode === 'create' && !useFog });
   }
 
   for (const st of layer.stairs) {
@@ -398,7 +428,7 @@ export function render(ctx, {
   if (mode === 'play' && world.play.layerId === layer.id) {
     drawPlayer(ctx, world.play.x, world.play.y, world.play.facing);
     const faceDoor = doorInFront(layer, world.play.x, world.play.y, world.play.facing);
-    if (faceDoor) {
+    if (faceDoor && (!isSecretDoor(faceDoor) || isDoorOpen(world, faceDoor))) {
       ctx.save();
       ctx.fillStyle = 'rgba(16, 14, 12, 0.86)';
       ctx.strokeStyle = '#d4b483';

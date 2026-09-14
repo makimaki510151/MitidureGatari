@@ -16,7 +16,12 @@ export const DOOR_LOOKS = {
   ornate: { name: '装飾扉', fill: '#5a1818', stroke: '#2a0b0b', metal: '#d4b483' },
   steel: { name: '鋼鉄扉', fill: '#6d7884', stroke: '#262c32', metal: '#e4eaf0' },
   worn: { name: '古びた扉', fill: '#5a4a36', stroke: '#2a2218', metal: '#8a7a62' },
+  secret: { name: '隠し扉（壁）', fill: '#1a1612', stroke: '#1a1612', metal: '#3d3428' },
 };
+
+export function isSecretDoor(door) {
+  return !!door && (door.appearance === 'secret' || door.hidden === true);
+}
 
 export const STAIR_STYLES = {
   up: { name: '上り階段', mark: '上' },
@@ -132,6 +137,7 @@ export function placeDoor(layer, x, y, side, extras = {}) {
     swing,
     hinge: extras.hinge || 'a',
     defaultOpen: extras.defaultOpen || false,
+    hidden: extras.hidden === true || extras.appearance === 'secret',
   };
   layer.doors.push(door);
   return door;
@@ -368,7 +374,7 @@ export function createDefaultWorld() {
   placeDoor(f1, 9, 12, 'n', { id: 'D-ent', appearance: 'wood', swing: 's', hinge: 'a' });
   placeDoor(f1, 3, 6, 'w', { id: 'D-west', appearance: 'iron', swing: 'w', hinge: 'a' });
   placeDoor(f1, 17, 6, 'w', { id: 'D-east', appearance: 'ornate', swing: 'e', hinge: 'b' });
-  placeDoor(f1, 9, 2, 'n', { id: 'D-north', appearance: 'stone', swing: 'n', hinge: 'a' });
+  placeDoor(f1, 9, 2, 'n', { id: 'D-north', appearance: 'secret', swing: 'n', hinge: 'a', hidden: true });
 
   const f2 = createLayer({ id: 'L2F', name: '2階', kind: 'floor', width: 16, height: 12 });
   fillRect(f2, 2, 2, 8, 7, CELL.ROOM);
@@ -426,6 +432,67 @@ export function cloneWorld(world) {
   return JSON.parse(JSON.stringify(world, (k, v) => (k.startsWith('_') ? undefined : v)));
 }
 
+export function exportMapData(world, { includePlay = false } = {}) {
+  const data = cloneWorld(world);
+  data.version = 1;
+  if (!includePlay) delete data.play;
+  return data;
+}
+
+export function exportMapJson(world, { includePlay = false } = {}) {
+  return JSON.stringify(exportMapData(world, { includePlay }), null, 2);
+}
+
+export function normalizeWorld(data) {
+  if (!data || !Array.isArray(data.layers) || !data.layers.length) {
+    throw new Error('layers がありません');
+  }
+  const world = cloneWorld(data);
+  world.version = 1;
+  for (const layer of world.layers) {
+    layer.id = layer.id || uid('L');
+    layer.width = Math.max(4, Math.min(48, layer.width | 0));
+    layer.height = Math.max(4, Math.min(48, layer.height | 0));
+    layer.kind = layer.kind === 'place' ? 'place' : 'floor';
+    layer.name = layer.name || '無名';
+    if (!Array.isArray(layer.cells) || layer.cells.length !== layer.height) {
+      layer.cells = blankCells(layer.width, layer.height);
+    } else {
+      layer.cells = layer.cells.map((row) => {
+        const next = Array.isArray(row) ? row.slice(0, layer.width) : [];
+        while (next.length < layer.width) next.push(CELL.VOID);
+        return next.map((v) => (v === CELL.PATH || v === CELL.ROOM ? v : CELL.VOID));
+      });
+    }
+    layer.doors = Array.isArray(layer.doors) ? layer.doors : [];
+    for (const d of layer.doors) {
+      d.id = d.id || uid('D');
+      d.hidden = d.hidden === true || d.appearance === 'secret';
+      if (d.hidden && !d.appearance) d.appearance = 'secret';
+    }
+    layer.stairs = Array.isArray(layer.stairs) ? layer.stairs : [];
+  }
+  const startLayer = getLayer(world, world.start?.layerId) || world.layers[0];
+  world.start = {
+    layerId: startLayer.id,
+    x: world.start?.x | 0,
+    y: world.start?.y | 0,
+  };
+  if (!world.play) world.play = freshPlay(world.start.layerId, world.start.x, world.start.y);
+  else {
+    world.play.revealed = world.play.revealed || {};
+    world.play.doorsOpen = world.play.doorsOpen || {};
+  }
+  bakeWorld(world);
+  ensurePlay(world);
+  return world;
+}
+
+export function parseMapJson(text) {
+  const data = JSON.parse(text);
+  return normalizeWorld(data);
+}
+
 export function saveWorld(world) {
   const data = cloneWorld(world);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -435,20 +502,7 @@ export function loadWorld() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return createDefaultWorld();
-    const world = JSON.parse(raw);
-    if (!world || !Array.isArray(world.layers) || !world.layers.length) return createDefaultWorld();
-    for (const layer of world.layers) {
-      if (!layer.cells || layer.cells.length !== layer.height) {
-        layer.cells = blankCells(layer.width, layer.height);
-      }
-      layer.doors = layer.doors || [];
-      layer.stairs = layer.stairs || [];
-    }
-    world.start = world.start || { layerId: world.layers[0].id, x: 0, y: 0 };
-    world.play = world.play || freshPlay(world.start.layerId, world.start.x, world.start.y);
-    bakeWorld(world);
-    ensurePlay(world);
-    return world;
+    return normalizeWorld(JSON.parse(raw));
   } catch {
     return createDefaultWorld();
   }

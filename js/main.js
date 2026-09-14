@@ -15,14 +15,17 @@ import {
   doorInFront,
   ensurePlay,
   eraseCell,
+  exportMapJson,
   fillRect,
   findDoor,
   getDoorBetween,
   getLayer,
   isDoorOpen,
+  isSecretDoor,
   isWalkable,
   loadWorld,
   nearestEdge,
+  parseMapJson,
   placeDoor,
   placeStairs,
   resetPlay,
@@ -58,7 +61,7 @@ let lastPan = null;
 let spaceDown = false;
 let maskPreview = false;
 let pendingLink = null;
-let doorDraft = { appearance: 'wood', swing: 's', hinge: 'a' };
+let doorDraft = { appearance: 'wood', swing: 's', hinge: 'a', hidden: false };
 let stairsDraft = { style: 'up' };
 let undoStack = [];
 let redoStack = [];
@@ -259,6 +262,7 @@ function refreshProps() {
       <div class="choice" id="swings">${swings.map(([k, n]) => `<button type="button" data-k="${k}" class="${d.swing === k ? 'is-active' : ''}">${n}</button>`).join('')}</div>
       <label class="field">蝶番</label>
       <div class="choice" id="hinges">${hinges.map(([k, n]) => `<button type="button" data-k="${k}" class="${d.hinge === k ? 'is-active' : ''}">${n}</button>`).join('')}</div>
+      <label class="check-row"><input type="checkbox" id="door-hidden" ${isSecretDoor(d) ? 'checked' : ''}/><span>隠し扉（壁に擬態）</span></label>
       <label class="check-row"><input type="checkbox" id="door-open" ${d.defaultOpen ? 'checked' : ''}/><span>初期状態で開いている</span></label>
       <button type="button" class="btn" id="del-door">この扉を削除</button>
     `;
@@ -267,7 +271,9 @@ function refreshProps() {
       if (!b) return;
       pushUndo();
       d.appearance = b.dataset.look;
+      d.hidden = d.appearance === 'secret';
       doorDraft.appearance = d.appearance;
+      doorDraft.hidden = d.hidden;
       markDirty();
       refreshProps();
     };
@@ -286,6 +292,16 @@ function refreshProps() {
       pushUndo();
       d.hinge = b.dataset.k;
       doorDraft.hinge = d.hinge;
+      markDirty();
+      refreshProps();
+    };
+    propsEl.querySelector('#door-hidden').onchange = (e) => {
+      pushUndo();
+      d.hidden = e.target.checked;
+      if (d.hidden) d.appearance = 'secret';
+      else if (d.appearance === 'secret') d.appearance = 'wood';
+      doorDraft.appearance = d.appearance;
+      doorDraft.hidden = d.hidden;
       markDirty();
       refreshProps();
     };
@@ -363,7 +379,7 @@ function refreshProps() {
       `<button type="button" class="swatch ${doorDraft.appearance === k ? 'is-active' : ''}" data-look="${k}" style="--sw:${v.fill}">${v.name}</button>`
     ).join('');
     propsEl.innerHTML = `
-      <p class="muted">歩けるマス同士の境界付近をクリックすると扉が入ります。閉じている間は通行できません。</p>
+      <p class="muted">歩けるマス同士の境界付近をクリックすると扉が入ります。閉じている間は通行できません。隠し扉は壁と同じ見た目になり、プレイ中は F で調べると開きます。</p>
       <label class="field">見た目</label>
       <div class="swatches" id="looks">${looks}</div>
       <label class="field">開く方向（設置後にも変更可）</label>
@@ -376,11 +392,13 @@ function refreshProps() {
         <button type="button" data-k="a" class="${doorDraft.hinge === 'a' ? 'is-active' : ''}">左 / 上</button>
         <button type="button" data-k="b" class="${doorDraft.hinge === 'b' ? 'is-active' : ''}">右 / 下</button>
       </div>
+      <label class="check-row"><input type="checkbox" id="draft-hidden" ${doorDraft.appearance === 'secret' || doorDraft.hidden ? 'checked' : ''}/><span>隠し扉（壁に擬態）</span></label>
     `;
     propsEl.querySelector('#looks').onclick = (e) => {
       const b = e.target.closest('[data-look]');
       if (!b) return;
       doorDraft.appearance = b.dataset.look;
+      doorDraft.hidden = doorDraft.appearance === 'secret';
       refreshProps();
     };
     propsEl.querySelector('#swings').onclick = (e) => {
@@ -393,6 +411,11 @@ function refreshProps() {
       const b = e.target.closest('button');
       if (!b) return;
       doorDraft.hinge = b.dataset.k;
+      refreshProps();
+    };
+    propsEl.querySelector('#draft-hidden').onchange = (e) => {
+      doorDraft.hidden = e.target.checked;
+      doorDraft.appearance = doorDraft.hidden ? 'secret' : (doorDraft.appearance === 'secret' ? 'wood' : doorDraft.appearance);
       refreshProps();
     };
     return;
@@ -502,7 +525,7 @@ function linkNewLayer(stairs, kind) {
 }
 
 function hintText() {
-  if (mode === 'play') return 'WASD で移動　F で扉　階段に乗ると階層移動';
+  if (mode === 'play') return 'WASD 移動　F 扉／隠し扉　Esc 戻る';
   const map = {
     select: 'クリックで選択　Delete 削除　Ctrl+Z 取り消し',
     path: 'ドラッグで道を描く',
@@ -534,11 +557,13 @@ function refreshAll() {
 
 function setMode(next) {
   mode = next;
+  document.getElementById('app').classList.toggle('is-play', mode === 'play');
   document.getElementById('btn-create').classList.toggle('is-active', mode === 'create');
   document.getElementById('btn-play').classList.toggle('is-active', mode === 'play');
   document.getElementById('tools-panel').classList.toggle('hidden', mode === 'play');
   document.getElementById('play-help').classList.toggle('hidden', mode !== 'play');
   document.getElementById('mask-preview-row').classList.toggle('hidden', mode === 'play');
+  document.getElementById('play-hud').classList.toggle('hidden', mode !== 'play');
   stage.classList.toggle('is-play', mode === 'play');
   selection = null;
   pendingLink = null;
@@ -547,10 +572,36 @@ function setMode(next) {
     layerId = world.play.layerId;
     ensurePlay(world);
     followPlayer();
-    canvas.focus();
+    requestAnimationFrame(() => {
+      resizeCanvas();
+      followPlayer();
+      canvas.focus();
+    });
+  } else {
+    exitBrowserFullscreen();
+    requestAnimationFrame(() => resizeCanvas());
   }
   refreshAll();
   markDirty();
+}
+
+async function enterBrowserFullscreen() {
+  const root = document.documentElement;
+  if (document.fullscreenElement) return;
+  try {
+    await root.requestFullscreen();
+  } catch {
+    /* ブラウザが拒否してもアプリ内全画面で続行 */
+  }
+}
+
+async function exitBrowserFullscreen() {
+  if (!document.fullscreenElement) return;
+  try {
+    await document.exitFullscreen();
+  } catch {
+    /* ignore */
+  }
 }
 
 function setTool(next) {
@@ -779,7 +830,7 @@ function tryMove(dir) {
   const ny = world.play.y + DIRS[dir].y;
   const door = getDoorBetween(l, world.play.x, world.play.y, nx, ny);
   if (door && !isDoorOpen(world, door)) {
-    toast('扉が閉まっている');
+    if (!isSecretDoor(door)) toast('扉が閉まっている');
     return;
   }
   if (!canWalk(world, l, world.play.x, world.play.y, dir)) return;
@@ -811,13 +862,13 @@ function tryMove(dir) {
 function interactDoor() {
   const l = getLayer(world, world.play.layerId);
   const door = doorInFront(l, world.play.x, world.play.y, world.play.facing);
-  if (!door) {
-    toast('正面に扉がない');
-    return;
-  }
+  if (!door) return;
   const open = !isDoorOpen(world, door);
   setDoorOpen(world, door, open);
-  toast(open ? '扉を開けた' : '扉を閉じた');
+  const secret = isSecretDoor(door);
+  toast(secret
+    ? (open ? '隠し扉を開けた' : '隠し扉を閉じた')
+    : (open ? '扉を開けた' : '扉を閉じた'));
   markDirty();
 }
 
@@ -859,8 +910,110 @@ function tick(t) {
   requestAnimationFrame(tick);
 }
 
+function applyWorld(next, message) {
+  pushUndo();
+  world = next;
+  layerId = world.start.layerId;
+  selection = null;
+  pendingLink = null;
+  centerCamera();
+  refreshAll();
+  markDirty();
+  if (message) toast(message);
+}
+
+function jsonIncludePlay() {
+  return document.getElementById('json-include-play').checked;
+}
+
+function fillJsonEditor() {
+  document.getElementById('json-text').value = exportMapJson(world, { includePlay: jsonIncludePlay() });
+}
+
+function openJsonModal() {
+  fillJsonEditor();
+  document.getElementById('json-modal').classList.remove('hidden');
+  document.getElementById('json-text').focus();
+}
+
+function closeJsonModal() {
+  document.getElementById('json-modal').classList.add('hidden');
+}
+
+function downloadJson(text) {
+  const blob = new Blob([text], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'mitidure-map.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function applyJsonText() {
+  const raw = document.getElementById('json-text').value;
+  try {
+    const next = parseMapJson(raw);
+    applyWorld(next, 'JSONを適用しました。プレイできます');
+    closeJsonModal();
+  } catch (err) {
+    toast(`JSONを読めません: ${err.message || err}`);
+  }
+}
+
+function resetExploration() {
+  confirmModal('探索状況（位置・マスク・扉の開閉）を開始時点に戻します。マップ自体は消えません。', () => {
+    resetPlay(world);
+    if (mode === 'play') {
+      layerId = world.play.layerId;
+      followPlayer();
+    }
+    refreshAll();
+    markDirty();
+    toast('探索をリセットしました');
+  });
+}
+
 document.getElementById('btn-create').onclick = () => setMode('create');
 document.getElementById('btn-play').onclick = () => setMode('play');
+document.getElementById('btn-exit-play').onclick = () => setMode('create');
+document.getElementById('btn-play-fs').onclick = () => {
+  if (document.fullscreenElement) exitBrowserFullscreen();
+  else enterBrowserFullscreen();
+};
+document.getElementById('btn-json').onclick = () => openJsonModal();
+document.getElementById('json-cancel').onclick = () => closeJsonModal();
+document.getElementById('json-include-play').onchange = () => fillJsonEditor();
+document.getElementById('json-download').onclick = () => {
+  downloadJson(document.getElementById('json-text').value);
+  toast('JSONファイルを保存しました');
+};
+document.getElementById('json-copy').onclick = async () => {
+  const text = document.getElementById('json-text').value;
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('コピーしました');
+  } catch {
+    document.getElementById('json-text').select();
+    toast('Ctrl+C でコピーしてください');
+  }
+};
+document.getElementById('json-load').onclick = () => document.getElementById('json-file').click();
+document.getElementById('json-file').onchange = (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    document.getElementById('json-text').value = String(reader.result || '');
+    toast(`${file.name} を読み込みました。適用して使うを押してください`);
+  };
+  reader.readAsText(file, 'utf-8');
+};
+document.getElementById('json-apply').onclick = () => applyJsonText();
+document.getElementById('json-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'json-modal') closeJsonModal();
+});
 document.getElementById('chk-mask-preview').onchange = (e) => {
   maskPreview = e.target.checked;
 };
@@ -888,18 +1041,8 @@ document.getElementById('btn-add-place').onclick = () => {
   refreshAll();
   markDirty();
 };
-document.getElementById('btn-reset-play').onclick = () => {
-  confirmModal('探索状況（位置・マスク・扉の開閉）を開始時点に戻します。マップ自体は消えません。', () => {
-    resetPlay(world);
-    if (mode === 'play') {
-      layerId = world.play.layerId;
-      followPlayer();
-    }
-    refreshAll();
-    markDirty();
-    toast('探索をリセットしました');
-  });
-};
+document.getElementById('btn-reset-play').onclick = () => resetExploration();
+document.getElementById('btn-reset-play-hud').onclick = () => resetExploration();
 document.getElementById('btn-load-sample').onclick = () => {
   confirmModal('サンプル迷宮に置き換えます。現在のマップは消えます。', () => {
     world = createDefaultWorld();
@@ -946,6 +1089,20 @@ const toolKeys = {
 };
 
 window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (!document.getElementById('json-modal').classList.contains('hidden')) {
+      closeJsonModal();
+      return;
+    }
+    if (!document.getElementById('modal').classList.contains('hidden')) {
+      document.getElementById('modal').classList.add('hidden');
+      return;
+    }
+    if (mode === 'play' && !document.fullscreenElement) {
+      setMode('create');
+      return;
+    }
+  }
   if (e.target.matches('input, select, textarea')) return;
   if (e.code === 'Space') {
     spaceDown = true;
@@ -987,6 +1144,12 @@ window.addEventListener('keyup', (e) => {
   const map = { w: 'n', a: 'w', s: 's', d: 'e', ArrowUp: 'n', ArrowLeft: 'w', ArrowDown: 's', ArrowRight: 'e' };
   const dir = map[e.key] || map[e.key.toLowerCase()];
   if (dir && heldMove === dir) heldMove = null;
+});
+
+document.addEventListener('fullscreenchange', () => {
+  const btn = document.getElementById('btn-play-fs');
+  if (btn) btn.textContent = document.fullscreenElement ? '全画面解除' : '全画面';
+  requestAnimationFrame(() => resizeCanvas());
 });
 
 window.addEventListener('beforeunload', () => saveWorld(world));

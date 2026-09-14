@@ -443,7 +443,7 @@ kbd {
   justify-content: flex-end;
   gap: 8px;
 }
-#modal-ok {
+#modal-ok, #json-apply {
   background: #3a2e1c;
   color: var(--gold);
   border: 1px solid var(--gold-dim);
@@ -451,7 +451,101 @@ kbd {
   cursor: pointer;
 }
 
+#app.is-play .topbar,
+#app.is-play .sidebar {
+  display: none;
+}
+#app.is-play .workspace {
+  grid-template-columns: 1fr;
+}
+#app.is-play .stage {
+  background: #070605;
+}
+#app.is-play .floor-badge {
+  top: 16px;
+  left: 16px;
+}
+#app.is-play .stage-hint {
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 20px;
+  background: rgba(16, 14, 12, 0.72);
+  border: 1px solid var(--line);
+  padding: 6px 14px;
+}
+
+.play-hud {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  gap: 8px;
+  z-index: 6;
+}
+.play-hud.hidden { display: none; }
+.play-hud button {
+  background: rgba(16, 14, 12, 0.82);
+  color: var(--ink);
+  border: 1px solid var(--gold-dim);
+  padding: 7px 12px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+.play-hud button:hover {
+  color: var(--gold);
+}
+
+.json-card {
+  width: min(760px, calc(100% - 32px));
+  max-height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
+  padding: 16px 18px 14px;
+}
+.json-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.json-head h2 {
+  margin: 0;
+  font-size: 14px;
+  letter-spacing: 0.16em;
+  color: var(--gold);
+  font-weight: 600;
+}
+.json-help {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+#json-text {
+  width: 100%;
+  min-height: 360px;
+  flex: 1;
+  resize: vertical;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  padding: 10px 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.json-actions {
+  margin-top: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+.json-spacer { flex: 1; }
+
 @media (max-width: 960px) {
   .workspace { grid-template-columns: 200px 1fr 220px; }
   .mode-switch button { min-width: 88px; padding: 8px 10px; }
+  #app.is-play .workspace { grid-template-columns: 1fr; }
 }
