@@ -23,7 +23,6 @@ import {
   isDoorOpen,
   isSecretDoor,
   isWalkable,
-  loadWorld,
   nearestEdge,
   parseMapJson,
   placeDoor,
@@ -48,8 +47,8 @@ const propsTitle = document.getElementById('props-title');
 const layerList = document.getElementById('layer-list');
 const toastEl = document.getElementById('toast');
 
-let world = loadWorld();
-let mode = 'create';
+let world = createEmptyWorld();
+let mode = 'boot';
 let tool = 'select';
 let layerId = world.start.layerId;
 let selection = null;
@@ -379,7 +378,7 @@ function refreshProps() {
       `<button type="button" class="swatch ${doorDraft.appearance === k ? 'is-active' : ''}" data-look="${k}" style="--sw:${v.fill}">${v.name}</button>`
     ).join('');
     propsEl.innerHTML = `
-      <p class="muted">歩けるマス同士の境界付近をクリックすると扉が入ります。閉じている間は通行できません。隠し扉は壁と同じ見た目になり、プレイ中は F で調べると開きます。</p>
+      <p class="muted">歩けるマス同士の境界付近をクリックすると扉が入ります。閉じている間は通行できません。隠し扉は壁と同じ見た目になります。</p>
       <label class="field">見た目</label>
       <div class="swatches" id="looks">${looks}</div>
       <label class="field">開く方向（設置後にも変更可）</label>
@@ -525,7 +524,7 @@ function linkNewLayer(stairs, kind) {
 }
 
 function hintText() {
-  if (mode === 'play') return 'WASD 移動　F 扉／隠し扉　Esc 戻る';
+  if (mode === 'play') return 'WASD 移動　F 扉　Esc 戻る';
   const map = {
     select: 'クリックで選択　Delete 削除　Ctrl+Z 取り消し',
     path: 'ドラッグで道を描く',
@@ -555,7 +554,56 @@ function refreshAll() {
   refreshBadge();
 }
 
+function hideBoot() {
+  document.getElementById('boot').classList.add('hidden');
+}
+
+function showBoot() {
+  exitBrowserFullscreen();
+  document.getElementById('boot').classList.remove('hidden');
+  document.getElementById('app').classList.remove('is-play');
+  stage.classList.remove('is-play');
+  document.getElementById('play-hud').classList.add('hidden');
+  mode = 'boot';
+  heldMove = null;
+  selection = null;
+  pendingLink = null;
+  dragRect = null;
+  refreshHint();
+}
+
+function startCreate() {
+  world = createEmptyWorld();
+  layerId = world.start.layerId;
+  undoStack = [];
+  redoStack = [];
+  hideBoot();
+  centerCamera();
+  setMode('create');
+  toast('白紙のマップを開きました');
+}
+
+function startPlayFromText(text, filename) {
+  const next = parseMapJson(text);
+  world = next;
+  layerId = world.play.layerId;
+  undoStack = [];
+  redoStack = [];
+  hideBoot();
+  setMode('play');
+  toast(filename ? `${filename} を読み込みました` : 'マップを読み込みました');
+}
+
+function pickPlayFile() {
+  document.getElementById('boot-file').click();
+}
+
 function setMode(next) {
+  if (next === 'boot') {
+    showBoot();
+    return;
+  }
+  hideBoot();
   mode = next;
   document.getElementById('app').classList.toggle('is-play', mode === 'play');
   document.getElementById('btn-create').classList.toggle('is-active', mode === 'create');
@@ -890,6 +938,10 @@ function confirmModal(text, onOk) {
 function tick(t) {
   const { vw, vh } = viewSize();
   if (mode === 'play') followPlayer();
+  if (mode === 'boot') {
+    requestAnimationFrame(tick);
+    return;
+  }
   if (mode === 'play' && heldMove && t >= moveCooldown) {
     tryMove(heldMove);
     moveCooldown = t + 160;
@@ -979,7 +1031,41 @@ function resetExploration() {
 
 document.getElementById('btn-create').onclick = () => setMode('create');
 document.getElementById('btn-play').onclick = () => setMode('play');
-document.getElementById('btn-exit-play').onclick = () => setMode('create');
+document.getElementById('btn-exit-play').onclick = () => showBoot();
+document.getElementById('btn-title').onclick = () => showBoot();
+document.getElementById('boot-create').onclick = () => startCreate();
+document.getElementById('boot-play').onclick = () => pickPlayFile();
+document.getElementById('boot-file').onchange = (e) => {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      startPlayFromText(String(reader.result || ''), file.name);
+    } catch (err) {
+      toast(`JSONを読めません: ${err.message || err}`);
+    }
+  };
+  reader.readAsText(file, 'utf-8');
+};
+document.getElementById('boot').addEventListener('dragover', (e) => {
+  e.preventDefault();
+});
+document.getElementById('boot').addEventListener('drop', (e) => {
+  e.preventDefault();
+  const file = e.dataTransfer?.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      startPlayFromText(String(reader.result || ''), file.name);
+    } catch (err) {
+      toast(`JSONを読めません: ${err.message || err}`);
+    }
+  };
+  reader.readAsText(file, 'utf-8');
+});
 document.getElementById('btn-play-fs').onclick = () => {
   if (document.fullscreenElement) exitBrowserFullscreen();
   else enterBrowserFullscreen();
@@ -1102,7 +1188,7 @@ window.addEventListener('keydown', (e) => {
       return;
     }
     if (mode === 'play' && !document.fullscreenElement) {
-      setMode('create');
+      showBoot();
       return;
     }
   }
