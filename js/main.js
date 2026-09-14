@@ -8,11 +8,13 @@ import {
   bakeWorld,
   canWalk,
   cloneWorld,
+  countDoorsWithNum,
   createDefaultWorld,
   createEmptyWorld,
   createLayer,
   currentLayer,
   doorInFront,
+  doorNum,
   ensurePlay,
   eraseCell,
   exportMapJson,
@@ -26,6 +28,7 @@ import {
   isWalkable,
   nearestEdge,
   parseMapJson,
+  parseDoorNum,
   placeDoor,
   placeStairs,
   resetPlay,
@@ -61,7 +64,7 @@ let lastPan = null;
 let spaceDown = false;
 let maskPreview = false;
 let pendingLink = null;
-let doorDraft = { appearance: 'wood', swing: 's', hinge: 'a', hidden: false };
+let doorDraft = { appearance: 'wood', swing: 's', hinge: 'a', hidden: false, num: null };
 let stairsDraft = { style: 'up' };
 let undoStack = [];
 let redoStack = [];
@@ -254,8 +257,14 @@ function refreshProps() {
     const hinges = d.side === 'n'
       ? [['a', '西寄り（左）'], ['b', '東寄り（右）']]
       : [['a', '北寄り（上）'], ['b', '南寄り（下）']];
+    const n = doorNum(d);
+    const linked = n !== null ? countDoorsWithNum(world, n) : 0;
     propsEl.innerHTML = `
       <p class="muted">位置　(${d.x}, ${d.y})　${d.side === 'n' ? '南北の境' : '東西の境'}</p>
+      <label class="field">番号（空欄で独立）
+        <input type="number" id="door-num" min="0" max="999" placeholder="なし" value="${n === null ? '' : n}" />
+      </label>
+      ${n !== null ? `<p class="muted">同じ ${n} 番の扉は全レイヤーで ${linked} 枚。F で1枚動かすと、同じ番号はすべて動きます。初期で開いている扉は閉じ、閉じている扉は開きます。</p>` : '<p class="muted">番号を付けると同じ番号の扉が、階層・場所をまたいで開閉を共有します。</p>'}
       <label class="field">見た目</label>
       <div class="swatches" id="looks">${looks}</div>
       <label class="field">開く方向</label>
@@ -267,6 +276,13 @@ function refreshProps() {
       <label class="check-row"><input type="checkbox" id="door-open" ${d.defaultOpen ? 'checked' : ''}/><span>初期状態で開いている</span></label>
       <button type="button" class="btn" id="del-door">この扉を削除</button>
     `;
+    propsEl.querySelector('#door-num').onchange = (e) => {
+      pushUndo();
+      d.num = parseDoorNum(e.target.value);
+      doorDraft.num = d.num;
+      markDirty();
+      refreshProps();
+    };
     propsEl.querySelector('#looks').onclick = (e) => {
       const b = e.target.closest('[data-look]');
       if (!b) return;
@@ -380,7 +396,10 @@ function refreshProps() {
       `<button type="button" class="swatch ${doorDraft.appearance === k ? 'is-active' : ''}" data-look="${k}" style="--sw:${v.fill}">${v.name}</button>`
     ).join('');
     propsEl.innerHTML = `
-      <p class="muted">歩けるマス同士の境界付近をクリックすると扉が入ります。閉じている間は通行できません。隠し扉は壁と同じ見た目になります。振れ扉は開くと開いた側の通路を塞ぎ、その辺でも同じ扉として開閉できます。</p>
+      <p class="muted">歩けるマス同士の境界付近をクリックすると扉が入ります。閉じている間は通行できません。隠し扉は壁と同じ見た目になります。振れ扉は開くと開いた側の通路を塞ぎ、その辺でも同じ扉として開閉できます。番号を付けると同じ番号の扉が階層・場所をまたいで開閉を共有します。</p>
+      <label class="field">番号（空欄で独立）
+        <input type="number" id="draft-num" min="0" max="999" placeholder="なし" value="${doorDraft.num === null || doorDraft.num === undefined ? '' : doorDraft.num}" />
+      </label>
       <label class="field">見た目</label>
       <div class="swatches" id="looks">${looks}</div>
       <label class="field">開く方向（設置後にも変更可）</label>
@@ -395,6 +414,10 @@ function refreshProps() {
       </div>
       <label class="check-row"><input type="checkbox" id="draft-hidden" ${doorDraft.appearance === 'secret' || doorDraft.hidden ? 'checked' : ''}/><span>隠し扉（壁に擬態）</span></label>
     `;
+    propsEl.querySelector('#draft-num').onchange = (e) => {
+      doorDraft.num = parseDoorNum(e.target.value);
+      refreshProps();
+    };
     propsEl.querySelector('#looks').onclick = (e) => {
       const b = e.target.closest('[data-look]');
       if (!b) return;
@@ -918,6 +941,12 @@ function interactDoor() {
   if (!door) return;
   const open = !isDoorOpen(world, door);
   setDoorOpen(world, door, open);
+  const n = doorNum(door);
+  if (n !== null) {
+    toast(`${n}番の扉を動かした`);
+    markDirty();
+    return;
+  }
   const secret = isSecretDoor(door);
   toast(isSweepDoor(door)
     ? (open ? '振れ扉を開けた' : '振れ扉を閉じた')

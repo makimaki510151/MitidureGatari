@@ -5,6 +5,7 @@ import {
   DOOR_LOOKS,
   STAIR_STYLES,
   doorInFront,
+  doorNum,
   getLayer,
   isDoorOpen,
   isSecretDoor,
@@ -89,6 +90,28 @@ function drawWalls(ctx, layer, x, y, fogFn) {
   if (wallOn(layer, x, y, 'e', fogFn)) ctx.fillRect(px + CS - t / 2, py - 1, t, CS + 2);
 }
 
+function drawDoorNum(ctx, door) {
+  const n = doorNum(door);
+  if (n === null) return;
+  const x = door.x * CS;
+  const y = door.y * CS;
+  const mx = door.side === 'n' ? x + CS / 2 : x;
+  const my = door.side === 'n' ? y : y + CS / 2;
+  ctx.save();
+  ctx.font = 'bold 11px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(16, 14, 12, 0.9)';
+  ctx.fillStyle = '#efe7d8';
+  const label = String(n);
+  const ty = my + 7;
+  ctx.strokeText(label, mx, ty);
+  ctx.fillText(label, mx, ty);
+  ctx.restore();
+}
+
 function drawDoor(ctx, door, open, { createMark = false } = {}) {
   const secret = isSecretDoor(door);
   const x = door.x * CS;
@@ -123,6 +146,7 @@ function drawDoor(ctx, door, open, { createMark = false } = {}) {
       ctx.fillText('隠', mx, my - 10);
       ctx.restore();
     }
+    if (createMark || open) drawDoorNum(ctx, door);
     return;
   }
 
@@ -249,6 +273,7 @@ function drawDoor(ctx, door, open, { createMark = false } = {}) {
     ctx.fillText('振', mx, my - 10);
     ctx.restore();
   }
+  drawDoorNum(ctx, door);
   ctx.restore();
 }
 

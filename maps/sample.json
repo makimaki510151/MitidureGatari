@@ -371,7 +371,8 @@
           "swing": "s",
           "hinge": "a",
           "defaultOpen": false,
-          "hidden": false
+          "hidden": false,
+          "num": 1
         },
         {
           "id": "D-west",
@@ -381,8 +382,9 @@
           "appearance": "iron",
           "swing": "w",
           "hinge": "a",
-          "defaultOpen": false,
-          "hidden": false
+          "defaultOpen": true,
+          "hidden": false,
+          "num": 1
         },
         {
           "id": "D-east",
@@ -664,7 +666,8 @@
           "swing": "e",
           "hinge": "a",
           "defaultOpen": false,
-          "hidden": false
+          "hidden": false,
+          "num": 1
         }
       ],
       "stairs": [

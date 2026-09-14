@@ -74,8 +74,32 @@ export function freshPlay(layerId, x, y) {
     facing: 'n',
     revealed: {},
     doorsOpen: {},
+    doorNumsFlipped: {},
     ignoreStairs: false,
   };
+}
+
+export function parseDoorNum(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.min(999, Math.floor(n));
+}
+
+export function doorNum(door) {
+  return parseDoorNum(door?.num);
+}
+
+export function countDoorsWithNum(world, num) {
+  const n = parseDoorNum(num);
+  if (n === null) return 0;
+  let c = 0;
+  for (const layer of world.layers) {
+    for (const d of layer.doors) {
+      if (doorNum(d) === n) c++;
+    }
+  }
+  return c;
 }
 
 export function fillRect(layer, x, y, w, h, type) {
@@ -187,6 +211,8 @@ export function placeDoor(layer, x, y, side, extras = {}) {
     defaultOpen: extras.defaultOpen || false,
     hidden: extras.hidden === true || extras.appearance === 'secret',
   };
+  const num = parseDoorNum(extras.num);
+  if (num !== null) door.num = num;
   layer.doors.push(door);
   return door;
 }
@@ -289,11 +315,22 @@ export function isRegionRevealed(world, layer, x, y) {
 }
 
 export function isDoorOpen(world, door) {
+  const n = doorNum(door);
+  if (n !== null) {
+    const flipped = !!(world.play.doorNumsFlipped && world.play.doorNumsFlipped[n]);
+    return flipped ? !door.defaultOpen : !!door.defaultOpen;
+  }
   if (world.play.doorsOpen[door.id] !== undefined) return !!world.play.doorsOpen[door.id];
   return !!door.defaultOpen;
 }
 
 export function setDoorOpen(world, door, open) {
+  const n = doorNum(door);
+  if (n !== null) {
+    if (!world.play.doorNumsFlipped) world.play.doorNumsFlipped = {};
+    world.play.doorNumsFlipped[n] = !!open !== !!door.defaultOpen;
+    return;
+  }
   world.play.doorsOpen[door.id] = open;
 }
 
@@ -423,8 +460,8 @@ export function createDefaultWorld() {
   f1.cells[10][10] = CELL.PATH;
   fillRect(f1, 11, 9, 3, 3, CELL.ROOM);
 
-  placeDoor(f1, 9, 12, 'n', { id: 'D-ent', appearance: 'wood', swing: 's', hinge: 'a' });
-  placeDoor(f1, 3, 6, 'w', { id: 'D-west', appearance: 'iron', swing: 'w', hinge: 'a' });
+  placeDoor(f1, 9, 12, 'n', { id: 'D-ent', appearance: 'wood', swing: 's', hinge: 'a', num: 1 });
+  placeDoor(f1, 3, 6, 'w', { id: 'D-west', appearance: 'iron', swing: 'w', hinge: 'a', num: 1, defaultOpen: true });
   placeDoor(f1, 17, 6, 'w', { id: 'D-east', appearance: 'ornate', swing: 'e', hinge: 'b' });
   placeDoor(f1, 9, 2, 'n', { id: 'D-north', appearance: 'secret', swing: 'n', hinge: 'a', hidden: true });
   placeDoor(f1, 10, 10, 'w', { id: 'D-sweep', appearance: 'sweep', swing: 'e', hinge: 'a' });
@@ -454,7 +491,7 @@ export function createDefaultWorld() {
     targetX: 6,
     targetY: 5,
   });
-  placeDoor(f2, 11, 5, 'w', { id: 'D-vault', appearance: 'steel', swing: 'e', hinge: 'a' });
+  placeDoor(f2, 11, 5, 'w', { id: 'D-vault', appearance: 'steel', swing: 'e', hinge: 'a', num: 1 });
   placeStairs(f2, 8, 7, {
     id: 'S-portal',
     style: 'portal',
@@ -522,6 +559,7 @@ export function normalizeWorld(data) {
       d.id = d.id || uid('D');
       d.hidden = d.hidden === true || d.appearance === 'secret';
       if (d.hidden && !d.appearance) d.appearance = 'secret';
+      d.num = parseDoorNum(d.num);
     }
     layer.stairs = Array.isArray(layer.stairs) ? layer.stairs : [];
   }
@@ -535,6 +573,7 @@ export function normalizeWorld(data) {
   else {
     world.play.revealed = world.play.revealed || {};
     world.play.doorsOpen = world.play.doorsOpen || {};
+    world.play.doorNumsFlipped = world.play.doorNumsFlipped || {};
   }
   bakeWorld(world);
   ensurePlay(world);
