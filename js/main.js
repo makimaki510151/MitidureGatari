@@ -26,9 +26,11 @@ import {
   isSecretDoor,
   isSweepDoor,
   isWalkable,
+  markAt,
   nearestEdge,
   parseMapJson,
   parseDoorNum,
+  parseGlyph,
   placeDoor,
   placeStairs,
   resetPlay,
@@ -36,6 +38,7 @@ import {
   revealAt,
   saveWorld,
   setDoorOpen,
+  setMark,
   stairsAt,
 } from './world.js';
 import { cellAtWorld, render, screenToWorld } from './render.js';
@@ -66,6 +69,7 @@ let maskPreview = false;
 let pendingLink = null;
 let doorDraft = { appearance: 'wood', swing: 's', hinge: 'a', hidden: false, num: null };
 let stairsDraft = { style: 'up' };
+let markDraft = '1';
 let undoStack = [];
 let redoStack = [];
 let saveTimer = 0;
@@ -331,6 +335,39 @@ function refreshProps() {
     return;
   }
 
+  if (selection?.type === 'mark') {
+    const m = selection.mark;
+    propsTitle.textContent = '文字';
+    propsEl.innerHTML = `
+      <p class="muted">位置　(${m.x}, ${m.y})　マスに1文字だけ置けます。部屋番号などに使えます。</p>
+      <label class="field">文字
+        <input type="text" id="mark-ch" value="${escapeHtml(m.ch)}" />
+      </label>
+      <button type="button" class="btn" id="del-mark">この文字を削除</button>
+    `;
+    const input = propsEl.querySelector('#mark-ch');
+    input.oninput = (e) => {
+      const ch = parseGlyph(e.target.value);
+      if (e.target.value !== ch) e.target.value = ch;
+    };
+    input.onchange = (e) => {
+      pushUndo();
+      const ch = parseGlyph(e.target.value);
+      if (!ch) {
+        setMark(l, m.x, m.y, '');
+        selection = null;
+      } else {
+        const next = setMark(l, m.x, m.y, ch);
+        selection = { type: 'mark', mark: next, x: next.x, y: next.y };
+        markDraft = ch;
+      }
+      markDirty();
+      refreshProps();
+    };
+    propsEl.querySelector('#del-mark').onclick = () => deleteSelection();
+    return;
+  }
+
   if (selection?.type === 'stairs') {
     const s = selection.stairs;
     const styles = Object.entries(STAIR_STYLES).map(([k, v]) =>
@@ -445,6 +482,38 @@ function refreshProps() {
     return;
   }
 
+  if (tool === 'mark') {
+    propsTitle.textContent = '文字を置く';
+    const chips = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].map((k) =>
+      `<button type="button" data-k="${k}" class="${markDraft === k ? 'is-active' : ''}">${k}</button>`
+    ).join('');
+    propsEl.innerHTML = `
+      <p class="muted">歩けるマスをクリックすると、1文字が置かれます。同じマスをクリックすると上書きされます。文字を空にしてクリックすると消えます。</p>
+      <label class="field">文字
+        <input type="text" id="draft-mark" value="${escapeHtml(markDraft)}" />
+      </label>
+      <label class="field">よく使う番号</label>
+      <div class="choice" id="mark-chips">${chips}</div>
+    `;
+    const input = propsEl.querySelector('#draft-mark');
+    input.oninput = (e) => {
+      const ch = parseGlyph(e.target.value);
+      if (e.target.value !== ch) e.target.value = ch;
+      markDraft = ch;
+    };
+    input.onchange = () => {
+      markDraft = parseGlyph(input.value);
+      refreshProps();
+    };
+    propsEl.querySelector('#mark-chips').onclick = (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      markDraft = b.dataset.k;
+      refreshProps();
+    };
+    return;
+  }
+
   if (tool === 'stairs') {
     propsTitle.textContent = '階段を置く';
     const styles = Object.entries(STAIR_STYLES).map(([k, v]) =>
@@ -465,10 +534,11 @@ function refreshProps() {
   }
 
   const toolsHelp = {
-    select: '扉・階段をクリックして編集します。Delete で削除、Ctrl+Z で元に戻します。',
+    select: '扉・階段・文字をクリックして編集します。Delete で削除、Ctrl+Z で元に戻します。',
     path: 'ドラッグして通路を描きます。同じ通路が扉で区切られていない限り、進入時にまとめて開示されます。',
     room: 'ドラッグして矩形の部屋を置きます。部屋はひとつの区画としてマスク解除されます。',
     spawn: 'プレイ開始位置をクリックして指定します。',
+    mark: 'クリックして1文字を置く。キー入力でも文字を変えられます。',
     erase: 'ドラッグしてマスを空にします。そのマスの階段や隣接する扉も消えます。',
   };
 
@@ -557,6 +627,7 @@ function hintText() {
     door: 'マスの境界をクリックして扉',
     stairs: 'クリックで階段 / 転移門',
     spawn: 'クリックで開始位置',
+    mark: 'クリックで1文字を置く。キーで文字を変更',
     erase: 'ドラッグで消去',
   };
   const pos = hover ? `　(${hover.x}, ${hover.y})` : '';
@@ -698,6 +769,8 @@ function hitTest(c) {
     const door = findDoor(l, c.x, c.y, edge);
     if (door) return { type: 'door', door };
   }
+  const mark = markAt(l, c.x, c.y);
+  if (mark) return { type: 'mark', mark, x: mark.x, y: mark.y };
   return { type: 'cell', x: c.x, y: c.y };
 }
 
@@ -709,6 +782,8 @@ function deleteSelection() {
     l.doors = l.doors.filter((d) => d.id !== selection.door.id);
   } else if (selection.type === 'stairs') {
     l.stairs = l.stairs.filter((s) => s.id !== selection.stairs.id);
+  } else if (selection.type === 'mark') {
+    setMark(l, selection.x, selection.y, '');
   }
   selection = null;
   bakeRegions(l);
@@ -761,7 +836,7 @@ function onDown(e) {
     return;
   }
 
-  if (tool === 'path' || tool === 'erase') {
+  if (tool === 'path' || tool === 'erase' || tool === 'mark') {
     pushUndo();
     painting = true;
     paintAt(c.x, c.y);
@@ -828,10 +903,15 @@ function paintAt(x, y) {
   if (tool === 'path') {
     if (!l.cells[y] || x < 0 || y < 0 || x >= l.width || y >= l.height) return;
     l.cells[y][x] = CELL.PATH;
+    bakeRegions(l);
   } else if (tool === 'erase') {
     eraseCell(l, x, y);
+    bakeRegions(l);
+  } else if (tool === 'mark') {
+    if (!isWalkable(l, x, y)) return;
+    const next = setMark(l, x, y, markDraft);
+    selection = next ? { type: 'mark', mark: next, x: next.x, y: next.y } : null;
   }
-  bakeRegions(l);
   markDirty();
 }
 
@@ -1203,6 +1283,7 @@ const toolKeys = {
   e: 'room',
   r: 'door',
   t: 'stairs',
+  g: 'mark',
   x: 'erase',
   1: 'select',
   2: 'path',
@@ -1211,6 +1292,7 @@ const toolKeys = {
   5: 'stairs',
   6: 'spawn',
   7: 'erase',
+  8: 'mark',
 };
 
 window.addEventListener('keydown', (e) => {
@@ -1241,6 +1323,18 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Delete' || e.key === 'Backspace') {
     if (mode === 'create') deleteSelection();
     return;
+  }
+  if (mode === 'create' && tool === 'mark' && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) {
+    const lower = e.key.toLowerCase();
+    if (!['q', 'e', 'r', 't', 'x', 'g'].includes(lower)) {
+      const ch = parseGlyph(e.key);
+      if (ch) {
+        markDraft = ch;
+        refreshProps();
+        e.preventDefault();
+        return;
+      }
+    }
   }
   if (mode === 'create' && toolKeys[e.key.toLowerCase()]) {
     setTool(toolKeys[e.key.toLowerCase()]);

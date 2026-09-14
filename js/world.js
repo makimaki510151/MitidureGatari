@@ -63,6 +63,7 @@ export function createLayer({ id, name, kind = 'floor', width = 16, height = 12,
     cells: cells || blankCells(width, height),
     doors: [],
     stairs: [],
+    marks: [],
   };
 }
 
@@ -217,6 +218,32 @@ export function placeDoor(layer, x, y, side, extras = {}) {
   return door;
 }
 
+export function parseGlyph(value) {
+  const s = String(value ?? '').replace(/\s/g, '');
+  if (!s) return '';
+  if (typeof Intl !== 'undefined' && Intl.Segmenter) {
+    const it = new Intl.Segmenter('ja', { granularity: 'grapheme' }).segment(s)[Symbol.iterator]();
+    const first = it.next().value;
+    return first ? first.segment : '';
+  }
+  return [...s][0] || '';
+}
+
+export function markAt(layer, x, y) {
+  if (!Array.isArray(layer.marks)) return null;
+  return layer.marks.find((m) => m.x === x && m.y === y) || null;
+}
+
+export function setMark(layer, x, y, ch) {
+  if (!inBounds(layer, x, y)) return null;
+  layer.marks = Array.isArray(layer.marks) ? layer.marks.filter((m) => !(m.x === x && m.y === y)) : [];
+  const text = parseGlyph(ch);
+  if (!text) return null;
+  const mark = { x, y, ch: text };
+  layer.marks.push(mark);
+  return mark;
+}
+
 export function stairsAt(layer, x, y) {
   return layer.stairs.find((s) => s.x === x && s.y === y) || null;
 }
@@ -364,12 +391,14 @@ export function resizeLayer(layer, width, height) {
     return d.x > 0 && d.x < w && d.y >= 0 && d.y < h;
   });
   layer.stairs = layer.stairs.filter((s) => s.x >= 0 && s.y >= 0 && s.x < w && s.y < h);
+  layer.marks = (layer.marks || []).filter((m) => m.x >= 0 && m.y >= 0 && m.x < w && m.y < h);
 }
 
 export function eraseCell(layer, x, y) {
   if (!inBounds(layer, x, y)) return;
   layer.cells[y][x] = CELL.VOID;
   layer.stairs = layer.stairs.filter((s) => !(s.x === x && s.y === y));
+  layer.marks = (layer.marks || []).filter((m) => !(m.x === x && m.y === y));
   layer.doors = layer.doors.filter((d) => {
     if (d.x === x && d.y === y) return false;
     if (d.side === 'n' && d.x === x && d.y === y + 1) return false;
@@ -460,6 +489,13 @@ export function createDefaultWorld() {
   f1.cells[10][10] = CELL.PATH;
   fillRect(f1, 11, 9, 3, 3, CELL.ROOM);
 
+  setMark(f1, 9, 13, '1');
+  setMark(f1, 9, 6, '2');
+  setMark(f1, 1, 6, '3');
+  setMark(f1, 18, 6, '4');
+  setMark(f1, 9, 0, '5');
+  setMark(f1, 12, 10, '6');
+
   placeDoor(f1, 9, 12, 'n', { id: 'D-ent', appearance: 'wood', swing: 's', hinge: 'a', num: 1 });
   placeDoor(f1, 3, 6, 'w', { id: 'D-west', appearance: 'iron', swing: 'w', hinge: 'a', num: 1, defaultOpen: true });
   placeDoor(f1, 17, 6, 'w', { id: 'D-east', appearance: 'ornate', swing: 'e', hinge: 'b' });
@@ -470,11 +506,14 @@ export function createDefaultWorld() {
   fillRect(f2, 2, 2, 8, 7, CELL.ROOM);
   f2.cells[5][10] = CELL.PATH;
   fillRect(f2, 11, 3, 4, 5, CELL.ROOM);
+  setMark(f2, 5, 5, '7');
+  setMark(f2, 12, 5, '8');
 
   const cave = createLayer({ id: 'LCave', name: '地下祭壇', kind: 'place', width: 10, height: 10 });
   fillRect(cave, 2, 3, 6, 6, CELL.ROOM);
   cave.cells[2][4] = CELL.PATH;
   fillRect(cave, 3, 0, 3, 2, CELL.ROOM);
+  setMark(cave, 4, 6, '9');
   placeDoor(cave, 4, 3, 'n', { id: 'D-cave', appearance: 'worn', swing: 's', hinge: 'a' });
 
   placeStairs(f1, 6, 5, {
@@ -562,6 +601,18 @@ export function normalizeWorld(data) {
       d.num = parseDoorNum(d.num);
     }
     layer.stairs = Array.isArray(layer.stairs) ? layer.stairs : [];
+    const rawMarks = Array.isArray(layer.marks) ? layer.marks : [];
+    const seen = new Set();
+    layer.marks = [];
+    for (const m of rawMarks) {
+      const x = m.x | 0;
+      const y = m.y | 0;
+      const ch = parseGlyph(m.ch);
+      const key = `${x},${y}`;
+      if (!ch || seen.has(key) || x < 0 || y < 0 || x >= layer.width || y >= layer.height) continue;
+      seen.add(key);
+      layer.marks.push({ x, y, ch });
+    }
   }
   const startLayer = getLayer(world, world.start?.layerId) || world.layers[0];
   world.start = {
