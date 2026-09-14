@@ -97,7 +97,7 @@ function toast(msg) {
   toastEl.textContent = msg;
   toastEl.classList.add('show');
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => toastEl.classList.remove('show'), 1700);
+  toast._t = setTimeout(() => toastEl.classList.remove('show'), 2200);
 }
 
 function markDirty() {
@@ -547,6 +547,7 @@ function setMode(next) {
     layerId = world.play.layerId;
     ensurePlay(world);
     followPlayer();
+    canvas.focus();
   }
   refreshAll();
   markDirty();
@@ -974,7 +975,7 @@ window.addEventListener('keydown', (e) => {
       }
       heldMove = dir;
     }
-    if (e.key.toLowerCase() === 'f' && !e.repeat) {
+    if ((e.key.toLowerCase() === 'f' || e.code === 'KeyF') && !e.repeat) {
       e.preventDefault();
       interactDoor();
     }
