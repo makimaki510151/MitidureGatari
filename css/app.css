@@ -394,6 +394,60 @@ kbd {
 }
 .props .swatch.is-active { border-color: var(--gold); color: var(--gold); }
 
+.boot {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(900px 480px at 50% 20%, rgba(212, 180, 131, 0.09), transparent 55%),
+    #100e0c;
+}
+.boot.hidden { display: none; }
+.boot-card {
+  width: min(440px, calc(100% - 32px));
+  padding: 36px 32px 28px;
+  background: var(--panel);
+  border: 1px solid var(--gold-dim);
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+.boot-brand {
+  justify-content: center;
+  margin-bottom: 22px;
+}
+.boot-lead {
+  margin: 0 0 22px;
+  letter-spacing: 0.18em;
+  font-size: 14px;
+  color: var(--ink);
+}
+.boot-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.boot-actions button {
+  padding: 16px 12px;
+  background: var(--bg);
+  color: var(--gold);
+  border: 1px solid var(--gold-dim);
+  font: inherit;
+  font-size: 15px;
+  letter-spacing: 0.2em;
+  cursor: pointer;
+}
+.boot-actions button:hover {
+  background: #2a2318;
+}
+.boot-note {
+  margin: 20px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
 .hidden { display: none !important; }
 
 .toast {

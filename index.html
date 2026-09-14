@@ -25,6 +25,7 @@
 
       <div class="top-actions">
         <span id="save-status" class="save-status" title="このブラウザに自動保存されます">保存済み</span>
+        <button type="button" id="btn-title" class="ghost">タイトル</button>
         <button type="button" id="btn-json" class="ghost">JSON</button>
         <button type="button" id="btn-reset-play" class="ghost">探索リセット</button>
         <button type="button" id="btn-load-sample" class="ghost">サンプル</button>
@@ -87,10 +88,10 @@
           <header class="panel-h"><h2>操作</h2></header>
           <ul class="help-list">
             <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> マス移動</li>
-            <li><kbd>F</kbd> 正面の扉を開閉（隠し扉も調べられる）</li>
+            <li><kbd>F</kbd> 正面の扉を開閉</li>
             <li>階段・転移門は乗ると移動</li>
             <li>区画に入るとマスクがまとめて外れる</li>
-            <li><kbd>Esc</kbd> クリエイトに戻る</li>
+            <li><kbd>Esc</kbd> タイトルに戻る</li>
           </ul>
         </section>
       </aside>
@@ -100,7 +101,7 @@
         <div id="stage-hint" class="stage-hint"></div>
         <div id="floor-badge" class="floor-badge"></div>
         <div id="play-hud" class="play-hud hidden">
-          <button type="button" id="btn-exit-play">クリエイト</button>
+          <button type="button" id="btn-exit-play">戻る</button>
           <button type="button" id="btn-play-fs">全画面</button>
           <button type="button" id="btn-reset-play-hud">探索リセット</button>
         </div>
@@ -113,6 +114,25 @@
         </section>
       </aside>
     </div>
+  </div>
+
+  <div id="boot" class="boot">
+    <div class="boot-card">
+      <div class="brand boot-brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div class="brand-text">
+          <strong>道連れ語り</strong>
+          <span>迷宮図</span>
+        </div>
+      </div>
+      <p class="boot-lead">モードを選んでください</p>
+      <div class="boot-actions">
+        <button type="button" id="boot-play">プレイ</button>
+        <button type="button" id="boot-create">クリエイト</button>
+      </div>
+      <p class="boot-note">プレイはマップJSONを読み込みます。クリエイトは白紙から始めます。</p>
+    </div>
+    <input type="file" id="boot-file" accept="application/json,.json" hidden />
   </div>
 
   <div id="toast" class="toast" role="status"></div>
