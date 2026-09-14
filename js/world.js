@@ -16,11 +16,16 @@ export const DOOR_LOOKS = {
   ornate: { name: '装飾扉', fill: '#5a1818', stroke: '#2a0b0b', metal: '#d4b483' },
   steel: { name: '鋼鉄扉', fill: '#6d7884', stroke: '#262c32', metal: '#e4eaf0' },
   worn: { name: '古びた扉', fill: '#5a4a36', stroke: '#2a2218', metal: '#8a7a62' },
+  sweep: { name: '振れ扉', fill: '#4a3d28', stroke: '#1c1610', metal: '#d4b483' },
   secret: { name: '隠し扉（壁）', fill: '#1a1612', stroke: '#1a1612', metal: '#3d3428' },
 };
 
 export function isSecretDoor(door) {
   return !!door && (door.appearance === 'secret' || door.hidden === true);
+}
+
+export function isSweepDoor(door) {
+  return !!door && door.appearance === 'sweep' && !isSecretDoor(door);
 }
 
 export const STAIR_STYLES = {
@@ -111,12 +116,55 @@ export function findDoor(layer, x, y, side) {
   return layer.doors.find((d) => d.x === n.x && d.y === n.y && d.side === n.side) || null;
 }
 
-export function getDoorBetween(layer, x1, y1, x2, y2) {
-  if (x2 === x1 && y2 === y1 - 1) return findDoor(layer, x1, y1, 'n');
-  if (x2 === x1 && y2 === y1 + 1) return findDoor(layer, x1, y1, 's');
-  if (x2 === x1 - 1 && y2 === y1) return findDoor(layer, x1, y1, 'w');
-  if (x2 === x1 + 1 && y2 === y1) return findDoor(layer, x1, y1, 'e');
+function edgeFromCells(x1, y1, x2, y2) {
+  if (x2 === x1 && y2 === y1 - 1) return normalizeEdge(x1, y1, 'n');
+  if (x2 === x1 && y2 === y1 + 1) return normalizeEdge(x1, y1, 's');
+  if (x2 === x1 - 1 && y2 === y1) return normalizeEdge(x1, y1, 'w');
+  if (x2 === x1 + 1 && y2 === y1) return normalizeEdge(x1, y1, 'e');
   return null;
+}
+
+export function storedDoorBetween(layer, x1, y1, x2, y2) {
+  const edge = edgeFromCells(x1, y1, x2, y2);
+  if (!edge) return null;
+  return findDoor(layer, edge.x, edge.y, edge.side);
+}
+
+/** The perpendicular edge a sweep door occupies while open (canonical n/w). */
+export function sweepBlockEdge(door) {
+  if (!isSweepDoor(door)) return null;
+  const { x, y, side } = door;
+  const swing = door.swing || (side === 'n' ? 's' : 'e');
+  const hinge = door.hinge || 'a';
+  if (side === 'n') {
+    if (swing !== 'n') {
+      return hinge === 'a' ? { x, y, side: 'w' } : { x: x + 1, y, side: 'w' };
+    }
+    return hinge === 'a' ? { x, y: y - 1, side: 'w' } : { x: x + 1, y: y - 1, side: 'w' };
+  }
+  if (side === 'w') {
+    if (swing !== 'w') {
+      return hinge === 'a' ? { x, y, side: 'n' } : { x, y: y + 1, side: 'n' };
+    }
+    return hinge === 'a' ? { x: x - 1, y, side: 'n' } : { x: x - 1, y: y + 1, side: 'n' };
+  }
+  return null;
+}
+
+function findOpenSweepBlocking(world, layer, edge) {
+  if (!world || !edge) return null;
+  for (const door of layer.doors) {
+    if (!isSweepDoor(door) || !isDoorOpen(world, door)) continue;
+    const block = sweepBlockEdge(door);
+    if (block && block.x === edge.x && block.y === edge.y && block.side === edge.side) return door;
+  }
+  return null;
+}
+
+export function getDoorBetween(layer, x1, y1, x2, y2, world) {
+  const stored = storedDoorBetween(layer, x1, y1, x2, y2);
+  if (stored) return stored;
+  return findOpenSweepBlocking(world, layer, edgeFromCells(x1, y1, x2, y2));
 }
 
 export function placeDoor(layer, x, y, side, extras = {}) {
@@ -253,14 +301,15 @@ export function canWalk(world, layer, x, y, dir) {
   const nx = x + DIRS[dir].x;
   const ny = y + DIRS[dir].y;
   if (!isWalkable(layer, nx, ny)) return false;
-  const door = getDoorBetween(layer, x, y, nx, ny);
-  if (door && !isDoorOpen(world, door)) return false;
+  const stored = storedDoorBetween(layer, x, y, nx, ny);
+  if (stored && !isDoorOpen(world, stored)) return false;
+  if (findOpenSweepBlocking(world, layer, edgeFromCells(x, y, nx, ny))) return false;
   return true;
 }
 
-export function doorInFront(layer, x, y, facing) {
+export function doorInFront(layer, x, y, facing, world) {
   const d = DIRS[facing];
-  return getDoorBetween(layer, x, y, x + d.x, y + d.y);
+  return getDoorBetween(layer, x, y, x + d.x, y + d.y, world);
 }
 
 export function resizeLayer(layer, width, height) {
@@ -370,11 +419,14 @@ export function createDefaultWorld() {
   f1.cells[2][9] = CELL.PATH;
   f1.cells[3][9] = CELL.PATH;
   fillRect(f1, 8, 0, 3, 2, CELL.ROOM);
+  f1.cells[9][10] = CELL.PATH;
+  f1.cells[10][10] = CELL.PATH;
 
   placeDoor(f1, 9, 12, 'n', { id: 'D-ent', appearance: 'wood', swing: 's', hinge: 'a' });
   placeDoor(f1, 3, 6, 'w', { id: 'D-west', appearance: 'iron', swing: 'w', hinge: 'a' });
   placeDoor(f1, 17, 6, 'w', { id: 'D-east', appearance: 'ornate', swing: 'e', hinge: 'b' });
   placeDoor(f1, 9, 2, 'n', { id: 'D-north', appearance: 'secret', swing: 'n', hinge: 'a', hidden: true });
+  placeDoor(f1, 10, 10, 'w', { id: 'D-sweep', appearance: 'sweep', swing: 'e', hinge: 'a' });
 
   const f2 = createLayer({ id: 'L2F', name: '2階', kind: 'floor', width: 16, height: 12 });
   fillRect(f2, 2, 2, 8, 7, CELL.ROOM);

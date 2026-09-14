@@ -22,6 +22,7 @@ import {
   getLayer,
   isDoorOpen,
   isSecretDoor,
+  isSweepDoor,
   isWalkable,
   nearestEdge,
   parseMapJson,
@@ -261,6 +262,7 @@ function refreshProps() {
       <div class="choice" id="swings">${swings.map(([k, n]) => `<button type="button" data-k="${k}" class="${d.swing === k ? 'is-active' : ''}">${n}</button>`).join('')}</div>
       <label class="field">蝶番</label>
       <div class="choice" id="hinges">${hinges.map(([k, n]) => `<button type="button" data-k="${k}" class="${d.hinge === k ? 'is-active' : ''}">${n}</button>`).join('')}</div>
+      ${isSweepDoor(d) ? '<p class="muted">開くと開いた側の通路を塞ぎ、その辺でも同じ扉として開閉できます。</p>' : ''}
       <label class="check-row"><input type="checkbox" id="door-hidden" ${isSecretDoor(d) ? 'checked' : ''}/><span>隠し扉（壁に擬態）</span></label>
       <label class="check-row"><input type="checkbox" id="door-open" ${d.defaultOpen ? 'checked' : ''}/><span>初期状態で開いている</span></label>
       <button type="button" class="btn" id="del-door">この扉を削除</button>
@@ -378,7 +380,7 @@ function refreshProps() {
       `<button type="button" class="swatch ${doorDraft.appearance === k ? 'is-active' : ''}" data-look="${k}" style="--sw:${v.fill}">${v.name}</button>`
     ).join('');
     propsEl.innerHTML = `
-      <p class="muted">歩けるマス同士の境界付近をクリックすると扉が入ります。閉じている間は通行できません。隠し扉は壁と同じ見た目になります。</p>
+      <p class="muted">歩けるマス同士の境界付近をクリックすると扉が入ります。閉じている間は通行できません。隠し扉は壁と同じ見た目になります。振れ扉は開くと開いた側の通路を塞ぎ、その辺でも同じ扉として開閉できます。</p>
       <label class="field">見た目</label>
       <div class="swatches" id="looks">${looks}</div>
       <label class="field">開く方向（設置後にも変更可）</label>
@@ -876,12 +878,15 @@ function tryMove(dir) {
   world.play.facing = dir;
   const nx = world.play.x + DIRS[dir].x;
   const ny = world.play.y + DIRS[dir].y;
-  const door = getDoorBetween(l, world.play.x, world.play.y, nx, ny);
-  if (door && !isDoorOpen(world, door)) {
-    if (!isSecretDoor(door)) toast('扉が閉まっている');
+  if (!canWalk(world, l, world.play.x, world.play.y, dir)) {
+    const door = getDoorBetween(l, world.play.x, world.play.y, nx, ny, world);
+    if (door && !isDoorOpen(world, door)) {
+      if (!isSecretDoor(door)) toast('扉が閉まっている');
+    } else if (door && isSweepDoor(door) && isDoorOpen(world, door)) {
+      toast('振れ扉が通路を塞いでいる');
+    }
     return;
   }
-  if (!canWalk(world, l, world.play.x, world.play.y, dir)) return;
   world.play.x += DIRS[dir].x;
   world.play.y += DIRS[dir].y;
   const newly = revealAt(world, l, world.play.x, world.play.y);
@@ -909,14 +914,16 @@ function tryMove(dir) {
 
 function interactDoor() {
   const l = getLayer(world, world.play.layerId);
-  const door = doorInFront(l, world.play.x, world.play.y, world.play.facing);
+  const door = doorInFront(l, world.play.x, world.play.y, world.play.facing, world);
   if (!door) return;
   const open = !isDoorOpen(world, door);
   setDoorOpen(world, door, open);
   const secret = isSecretDoor(door);
-  toast(secret
-    ? (open ? '隠し扉を開けた' : '隠し扉を閉じた')
-    : (open ? '扉を開けた' : '扉を閉じた'));
+  toast(isSweepDoor(door)
+    ? (open ? '振れ扉を開けた' : '振れ扉を閉じた')
+    : secret
+      ? (open ? '隠し扉を開けた' : '隠し扉を閉じた')
+      : (open ? '扉を開けた' : '扉を閉じた'));
   markDirty();
 }
 
