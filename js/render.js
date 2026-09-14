@@ -8,6 +8,7 @@ import {
   getLayer,
   isDoorOpen,
   isSecretDoor,
+  isSweepDoor,
   isWalkable,
   isRegionRevealed,
   stairsAt,
@@ -156,6 +157,14 @@ function drawDoor(ctx, door, open, { createMark = false } = {}) {
       ctx.arc(x0 + w * 0.72, y0 + h / 2, 2.2, 0, Math.PI * 2);
       ctx.fill();
     }
+    if (door.appearance === 'sweep') {
+      ctx.strokeStyle = pal.metal;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(x0 + w * 0.2, y0 + 1.5);
+      ctx.lineTo(x0 + w * 0.8, y0 + h - 1.5);
+      ctx.stroke();
+    }
   };
 
   const drawPlankV = (x0, y0, w, h) => {
@@ -184,6 +193,14 @@ function drawDoor(ctx, door, open, { createMark = false } = {}) {
       ctx.arc(x0 + w / 2, y0 + h * 0.72, 2.2, 0, Math.PI * 2);
       ctx.fill();
     }
+    if (door.appearance === 'sweep') {
+      ctx.strokeStyle = pal.metal;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.moveTo(x0 + 1.5, y0 + h * 0.2);
+      ctx.lineTo(x0 + w - 1.5, y0 + h * 0.8);
+      ctx.stroke();
+    }
   };
 
   if (door.side === 'n') {
@@ -208,6 +225,29 @@ function drawDoor(ctx, door, open, { createMark = false } = {}) {
       if (intoEast) drawPlankH(x + 1, hingeY, CS - 10, 8);
       else drawPlankH(x - (CS - 10) - 1, hingeY, CS - 10, 8);
     }
+  }
+
+  if (createMark && isSweepDoor(door)) {
+    const mx = door.side === 'n' ? x + CS / 2 : x;
+    const my = door.side === 'n' ? y : y + CS / 2;
+    ctx.save();
+    ctx.fillStyle = '#c9a44a';
+    ctx.strokeStyle = '#efe7d8';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(mx, my - 8);
+    ctx.lineTo(mx + 7, my);
+    ctx.lineTo(mx, my + 8);
+    ctx.lineTo(mx - 7, my);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = '#efe7d8';
+    ctx.fillText('振', mx, my - 10);
+    ctx.restore();
   }
   ctx.restore();
 }
@@ -432,7 +472,7 @@ export function render(ctx, {
 
   if (mode === 'play' && world.play.layerId === layer.id) {
     drawPlayer(ctx, world.play.x, world.play.y, world.play.facing);
-    const faceDoor = doorInFront(layer, world.play.x, world.play.y, world.play.facing);
+    const faceDoor = doorInFront(layer, world.play.x, world.play.y, world.play.facing, world);
     if (faceDoor && (!isSecretDoor(faceDoor) || isDoorOpen(world, faceDoor))) {
       ctx.save();
       ctx.fillStyle = 'rgba(16, 14, 12, 0.86)';
