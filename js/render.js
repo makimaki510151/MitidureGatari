@@ -231,6 +231,17 @@ function drawDoor(ctx, door, open, { createMark = false } = {}) {
     const mx = door.side === 'n' ? x + CS / 2 : x;
     const my = door.side === 'n' ? y : y + CS / 2;
     ctx.save();
+    ctx.fillStyle = '#c9a44a';
+    ctx.strokeStyle = '#efe7d8';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(mx, my - 8);
+    ctx.lineTo(mx + 7, my);
+    ctx.lineTo(mx, my + 8);
+    ctx.lineTo(mx - 7, my);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
     ctx.font = 'bold 10px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
