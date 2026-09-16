@@ -54,8 +54,11 @@ import {
   packPlay,
   parseShareRoute,
   playViewUrl,
+  SHARE_HANDSHAKE_MS,
   shareSeqShouldApply,
+  shareWaitMessage,
   shouldFlushMapSnap,
+  shouldRetryHandshake,
   viewFingerprint,
 } from './share.js';
 
@@ -108,6 +111,10 @@ let lastShareCamKey = '';
 let lastShareViewKey = '';
 let lastShareSnapAt = 0;
 let sharePeerCount = 0;
+let sharePendingAck = new Set();
+let shareWantTimer = 0;
+let shareViewerStartedAt = 0;
+let shareHostStartedAt = 0;
 
 function isShareViewer() {
   return shareRole === 'viewer';
@@ -1013,12 +1020,59 @@ function applyShareChrome(nextMode) {
   refreshBadge();
 }
 
+function ackShareSnap(seq) {
+  stopViewerWantLoop();
+  const send = () => shareLink?.sendHave({ seq: seq | 0 });
+  send();
+  setTimeout(send, 80);
+  setTimeout(send, 400);
+}
+
+function stopViewerWantLoop() {
+  clearTimeout(shareWantTimer);
+  shareWantTimer = 0;
+}
+
+function startViewerWantLoop() {
+  stopViewerWantLoop();
+  shareViewerStartedAt = performance.now();
+  const tick = () => {
+    if (!isShareViewer() || appliedMapSeq) return;
+    const elapsed = performance.now() - shareViewerStartedAt;
+    setShareWait(true, shareWaitMessage(elapsed));
+    shareLink?.sendWant({ t: Date.now() });
+    shareLink?.sendHello({ role: 'viewer', started: Date.now(), want: true });
+    shareWantTimer = setTimeout(tick, SHARE_HANDSHAKE_MS);
+  };
+  tick();
+}
+
+function sendSnapToPeer(peerId) {
+  if (shareRole !== 'host' || !shareLink || mode === 'boot') return;
+  const snap = captureShareSnap();
+  lastShareSnapAt = performance.now();
+  lastShareViewKey = viewFingerprint(snap);
+  lastShareCamKey = camKey();
+  if (peerId) {
+    sharePendingAck.add(peerId);
+    shareLink.sendSnap(snap, peerId);
+    return;
+  }
+  for (const id of shareLink.getPeers()) sharePendingAck.add(id);
+  shareLink.sendSnap(snap);
+}
+
 function applyShareSnap(payload, peerId) {
   if (!payload?.world || !Array.isArray(payload.world.layers)) return;
   const seq = payload.seq | 0;
   if (!shareSeqShouldApply(seq, appliedMapSeq)) return;
+  if (seq && seq === appliedMapSeq) {
+    ackShareSnap(seq);
+    setShareWait(false);
+    return;
+  }
   if (payload.mode === 'boot') {
-    setShareWait(true, 'ホストの画面を待っています');
+    setShareWait(true, shareWaitMessage(performance.now() - shareViewerStartedAt));
     return;
   }
   world = payload.world;
@@ -1031,6 +1085,7 @@ function applyShareSnap(payload, peerId) {
   }
   if (peerId) shareHostPeer = peerId;
   applyShareView(payload, { fromSnap: true, skipPlay: !playIsFresh });
+  ackShareSnap(seq);
   setShareWait(false);
   requestAnimationFrame(() => resizeCanvas());
 }
@@ -1040,7 +1095,7 @@ function applyShareView(payload, { fromSnap = false, skipPlay = false } = {}) {
   const seq = payload.seq | 0;
   if (!fromSnap && !shareSeqShouldApply(seq, appliedViewSeq)) return;
   if (payload.mode === 'boot') {
-    setShareWait(true, 'ホストの画面を待っています');
+    setShareWait(true, shareWaitMessage(performance.now() - shareViewerStartedAt));
     return;
   }
   if (!fromSnap && !appliedMapSeq) {
@@ -1071,6 +1126,11 @@ async function ensureShareLink() {
   if (shareLink) return shareLink;
   let link = null;
   link = await connectShareRoom(shareRoute.room, {
+    onStatus: (phase) => {
+      if (shareRole === 'viewer' && !appliedMapSeq) {
+        setShareWait(true, shareWaitMessage(0, phase));
+      }
+    },
     onSnap: (data, peerId) => {
       if (shareRole === 'host') return;
       applyShareSnap(data, peerId);
@@ -1084,23 +1144,38 @@ async function ensureShareLink() {
     onHello: (data, peerId) => {
       if (data?.role === 'host' && shareRole === 'viewer') {
         if (!shareHostPeer) shareHostPeer = peerId;
+        shareLink?.sendWant({ t: Date.now() });
       }
+      if (shareRole === 'host' && data?.role === 'viewer' && peerId) {
+        sendSnapToPeer(peerId);
+      }
+    },
+    onWant: (_data, peerId) => {
+      if (shareRole === 'host' && peerId) sendSnapToPeer(peerId);
+    },
+    onHave: (_data, peerId) => {
+      if (peerId) sharePendingAck.delete(peerId);
     },
     onPeerJoin: (peerId) => {
       const sess = shareLink || link;
       sharePeerCount = sess ? sess.getPeers().length : sharePeerCount + 1;
       updateShareStatus();
-      if (shareRole === 'host' && mode !== 'boot' && sess) {
-        sess.sendSnap(captureShareSnap(), peerId);
+      if (shareRole === 'host' && mode !== 'boot') sendSnapToPeer(peerId);
+      if (shareRole === 'viewer' && !appliedMapSeq) {
+        sess?.sendWant({ t: Date.now() });
+        sess?.sendHello({ role: 'viewer', started: Date.now(), want: true });
       }
     },
     onPeerLeave: (peerId) => {
       const sess = shareLink || link;
+      sharePendingAck.delete(peerId);
       sharePeerCount = sess ? sess.getPeers().length : Math.max(0, sharePeerCount - 1);
       updateShareStatus();
       if (shareRole === 'viewer' && peerId === shareHostPeer) {
         shareHostPeer = null;
+        appliedMapSeq = 0;
         setShareWait(true, 'ホストが切断しました。再接続を待っています');
+        startViewerWantLoop();
       }
     },
   });
@@ -1110,6 +1185,15 @@ async function ensureShareLink() {
 
 function pumpShare(t) {
   if (shareRole !== 'host' || !shareLink || mode === 'boot') return;
+  let sentSnap = false;
+  if (sharePendingAck.size && shouldRetryHandshake(t, lastShareSnapAt, shareHostStartedAt)) {
+    const snap = captureShareSnap();
+    lastShareSnapAt = t;
+    lastShareViewKey = viewFingerprint(snap);
+    lastShareCamKey = camKey();
+    for (const id of sharePendingAck) shareLink.sendSnap(snap, id);
+    sentSnap = true;
+  }
   if (shouldFlushMapSnap(t, {
     dirty: shareWorldDirty,
     touchedAt: shareMapTouchedAt,
@@ -1124,6 +1208,7 @@ function pumpShare(t) {
     shareLink.sendSnap(snap);
     return;
   }
+  if (sentSnap && t - shareHostStartedAt < 2500) return;
   if (shareWorldDirty) return;
   if (mode === 'create' && camKey() !== lastShareCamKey) shareViewDirty = true;
   if (!shareViewDirty) return;
@@ -1160,19 +1245,15 @@ async function startHosting() {
     await copyShareUrl();
     return;
   }
+  shareRole = 'host';
   try {
     await ensureShareLink();
-    shareRole = 'host';
     shareStartedAt = Date.now();
+    shareHostStartedAt = performance.now();
     shareWorldDirty = false;
     shareViewDirty = false;
-    const snap = captureShareSnap();
-    lastShareSnapAt = performance.now();
-    shareMapTouchedAt = lastShareSnapAt;
-    lastShareViewKey = viewFingerprint(snap);
-    lastShareCamKey = camKey();
     shareLink.sendHello({ role: 'host', started: shareStartedAt });
-    shareLink.sendSnap(snap);
+    sendSnapToPeer();
     updateShareStatus();
     await copyShareUrl();
   } catch (err) {
@@ -1185,7 +1266,7 @@ async function startShareViewer() {
   document.getElementById('app').classList.add('is-share-view', 'is-play');
   document.body.classList.add('is-share-view');
   hideBoot();
-  setShareWait(true, 'ホストの画面を待っています');
+  setShareWait(true, shareWaitMessage(0, 'load'));
   document.getElementById('play-hud')?.classList.remove('hidden');
   stage.classList.add('is-play');
   shareRole = 'viewer';
@@ -1195,7 +1276,7 @@ async function startShareViewer() {
   refreshHint();
   try {
     await ensureShareLink();
-    shareLink.sendHello({ role: 'viewer', started: Date.now() });
+    startViewerWantLoop();
   } catch (err) {
     setShareWait(true, `接続できません: ${err.message || err}`);
   }
