@@ -100,6 +100,7 @@ function viewSize() {
 
 function resizeCanvas() {
   const { vw, vh, dpr } = viewSize();
+  if (vw < 8 || vh < 8) return;
   canvas.width = Math.max(1, Math.floor(vw * dpr));
   canvas.height = Math.max(1, Math.floor(vh * dpr));
   canvas.style.width = `${vw}px`;
@@ -1299,6 +1300,9 @@ function confirmModal(text, onOk) {
 
 function tick(t) {
   const { vw, vh } = viewSize();
+  if (vw >= 8 && vh >= 8 && (canvas.style.width !== `${vw}px` || canvas.style.height !== `${vh}px`)) {
+    resizeCanvas();
+  }
   if (!isShareViewer() && mode === 'play') followPlayer();
   pumpShare(t);
   if (mode === 'boot' && !isShareViewer()) {
@@ -1624,6 +1628,9 @@ document.addEventListener('fullscreenchange', () => {
   const btn = document.getElementById('btn-play-fs');
   if (btn) btn.textContent = document.fullscreenElement ? '全画面解除' : '全画面';
   requestAnimationFrame(() => resizeCanvas());
+});
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) requestAnimationFrame(() => resizeCanvas());
 });
 
 window.addEventListener('beforeunload', () => {
