@@ -42,6 +42,7 @@ import {
   stairsAt,
 } from './world.js';
 import { cellAtWorld, render, screenToWorld } from './render.js';
+import { connectShareRoom, parseShareRoute, playViewUrl } from './share.js';
 
 const canvas = document.getElementById('map');
 const ctx = canvas.getContext('2d');
@@ -75,6 +76,19 @@ let redoStack = [];
 let saveTimer = 0;
 let moveCooldown = 0;
 let heldMove = null;
+const shareRoute = parseShareRoute();
+let shareRole = null;
+let shareLink = null;
+let shareStartedAt = 0;
+let shareHostPeer = null;
+let shareWorldDirty = false;
+let lastShareSnapAt = 0;
+let lastShareViewAt = 0;
+let sharePeerCount = 0;
+
+function isShareViewer() {
+  return shareRole === 'viewer';
+}
 
 const cam = { x: 0, y: 0, zoom: 1 };
 centerCamera();
@@ -111,6 +125,8 @@ function toast(msg) {
 }
 
 function markDirty() {
+  if (isShareViewer()) return;
+  shareWorldDirty = true;
   saveStatus.textContent = '保存中…';
   saveStatus.classList.add('is-dirty');
   clearTimeout(saveTimer);
@@ -619,6 +635,7 @@ function linkNewLayer(stairs, kind) {
 }
 
 function hintText() {
+  if (isShareViewer()) return 'ホストの画面を表示中';
   if (mode === 'play') return 'WASD 移動　F 扉　Esc 戻る';
   const map = {
     select: 'クリックで選択　Delete 削除　Ctrl+Z 取り消し',
@@ -655,6 +672,7 @@ function hideBoot() {
 }
 
 function showBoot() {
+  if (isShareViewer()) return;
   exitBrowserFullscreen();
   document.getElementById('boot').classList.remove('hidden');
   document.getElementById('app').classList.remove('is-play');
@@ -695,6 +713,7 @@ function pickPlayFile() {
 }
 
 function setMode(next) {
+  if (isShareViewer()) return;
   if (next === 'boot') {
     showBoot();
     return;
@@ -810,7 +829,229 @@ function applyPendingLink(c) {
   toast('接続しました');
 }
 
+function shareWaitEl() {
+  return document.getElementById('share-wait');
+}
+
+function setShareWait(on, text) {
+  const el = shareWaitEl();
+  if (!el) return;
+  el.classList.toggle('hidden', !on);
+  const label = document.getElementById('share-wait-text');
+  if (label && text) label.textContent = text;
+}
+
+function updateShareStatus() {
+  const el = document.getElementById('share-status');
+  const btn = document.getElementById('btn-share');
+  const hud = document.getElementById('btn-share-hud');
+  if (shareRole === 'host') {
+    const n = sharePeerCount;
+    const text = n ? `共有中　視聴 ${n}` : '共有中';
+    if (el) {
+      el.hidden = false;
+      el.textContent = text;
+    }
+    if (btn) btn.textContent = '共有URLをコピー';
+    if (hud) hud.textContent = '共有URLをコピー';
+  } else if (shareRole === 'viewer') {
+    if (el) {
+      el.hidden = false;
+      el.textContent = '視聴中';
+    }
+  } else if (el) {
+    el.hidden = true;
+    el.textContent = '';
+    if (btn) btn.textContent = '画面を共有';
+    if (hud) hud.textContent = '画面を共有';
+  }
+}
+
+function captureShareView() {
+  return {
+    layerId,
+    mode,
+    cam: { x: cam.x, y: cam.y, zoom: cam.zoom },
+    play: world.play,
+    maskPreview,
+    hover: hover ? { x: hover.x, y: hover.y } : null,
+    useFog: mode === 'play' || maskPreview,
+    t: Date.now(),
+  };
+}
+
+function captureShareSnap() {
+  return { ...captureShareView(), world: cloneWorld(world) };
+}
+
+function applyShareChrome(nextMode) {
+  hideBoot();
+  mode = nextMode === 'create' ? 'create' : 'play';
+  const playLike = shareRoute.isPlayView || mode === 'play';
+  document.getElementById('app').classList.toggle('is-play', playLike);
+  document.getElementById('btn-create')?.classList.toggle('is-active', mode === 'create');
+  document.getElementById('btn-play')?.classList.toggle('is-active', mode === 'play');
+  document.getElementById('tools-panel')?.classList.toggle('hidden', playLike);
+  document.getElementById('play-help')?.classList.toggle('hidden', !playLike);
+  document.getElementById('mask-preview-row')?.classList.toggle('hidden', playLike);
+  document.getElementById('play-hud')?.classList.toggle('hidden', !playLike);
+  stage.classList.toggle('is-play', playLike);
+  refreshHint();
+  refreshBadge();
+}
+
+function applyShareSnap(payload, peerId) {
+  if (!payload?.world || !Array.isArray(payload.world.layers)) return;
+  if (payload.mode === 'boot') {
+    setShareWait(true, 'ホストの画面を待っています');
+    return;
+  }
+  world = payload.world;
+  bakeWorld(world);
+  if (payload.play) world.play = payload.play;
+  if (peerId) shareHostPeer = peerId;
+  applyShareView(payload);
+  setShareWait(false);
+  requestAnimationFrame(() => resizeCanvas());
+}
+
+function applyShareView(payload) {
+  if (!payload) return;
+  if (payload.mode === 'boot') {
+    setShareWait(true, 'ホストの画面を待っています');
+    return;
+  }
+  if (payload.play) world.play = payload.play;
+  if (payload.cam) {
+    cam.x = payload.cam.x;
+    cam.y = payload.cam.y;
+    cam.zoom = payload.cam.zoom;
+  }
+  if (payload.layerId) layerId = payload.layerId;
+  hover = payload.hover || null;
+  maskPreview = !!payload.maskPreview;
+  const next = payload.mode === 'create' ? 'create' : 'play';
+  if (mode !== next) applyShareChrome(next);
+  else {
+    refreshHint();
+    refreshBadge();
+  }
+  setShareWait(false);
+}
+
+async function ensureShareLink() {
+  if (shareLink) return shareLink;
+  let link = null;
+  link = await connectShareRoom(shareRoute.room, {
+    onSnap: (data, peerId) => {
+      if (shareRole === 'host') return;
+      applyShareSnap(data, peerId);
+    },
+    onView: (data, peerId) => {
+      if (shareRole === 'host') return;
+      if (shareHostPeer && peerId && peerId !== shareHostPeer) return;
+      if (peerId) shareHostPeer = peerId;
+      applyShareView(data);
+    },
+    onHello: (data, peerId) => {
+      if (data?.role === 'host' && shareRole === 'viewer') {
+        if (!shareHostPeer) shareHostPeer = peerId;
+      }
+    },
+    onPeerJoin: (peerId) => {
+      const sess = shareLink || link;
+      sharePeerCount = sess ? sess.getPeers().length : sharePeerCount + 1;
+      updateShareStatus();
+      if (shareRole === 'host' && mode !== 'boot' && sess) {
+        const snap = captureShareSnap();
+        sess.sendSnap(snap, peerId);
+        sess.sendView(snap, peerId);
+      }
+    },
+    onPeerLeave: (peerId) => {
+      const sess = shareLink || link;
+      sharePeerCount = sess ? sess.getPeers().length : Math.max(0, sharePeerCount - 1);
+      updateShareStatus();
+      if (shareRole === 'viewer' && peerId === shareHostPeer) {
+        shareHostPeer = null;
+        setShareWait(true, 'ホストが切断しました。再接続を待っています');
+      }
+    },
+  });
+  shareLink = link;
+  return shareLink;
+}
+
+function pumpShare(t) {
+  if (shareRole !== 'host' || !shareLink || mode === 'boot') return;
+  if ((shareWorldDirty && t - lastShareSnapAt > 200) || t - lastShareSnapAt > 1600) {
+    shareWorldDirty = false;
+    lastShareSnapAt = t;
+    lastShareViewAt = t;
+    shareLink.sendSnap(captureShareSnap());
+    return;
+  }
+  if (t - lastShareViewAt > 90) {
+    lastShareViewAt = t;
+    shareLink.sendView(captureShareView());
+  }
+}
+
+async function copyShareUrl() {
+  const url = playViewUrl(shareRoute.room);
+  try {
+    await navigator.clipboard.writeText(url);
+    toast(`共有URLをコピーしました　${url}`);
+  } catch {
+    toast(url);
+  }
+}
+
+async function startHosting() {
+  if (isShareViewer()) return;
+  if (mode === 'boot') {
+    toast('先にプレイかクリエイトを開いてください');
+    return;
+  }
+  if (shareRole === 'host') {
+    await copyShareUrl();
+    return;
+  }
+  try {
+    await ensureShareLink();
+    shareRole = 'host';
+    shareStartedAt = Date.now();
+    shareWorldDirty = true;
+    shareLink.sendHello({ role: 'host', started: shareStartedAt });
+    shareLink.sendSnap(captureShareSnap());
+    updateShareStatus();
+    await copyShareUrl();
+  } catch (err) {
+    shareRole = null;
+    toast(`共有を開始できません: ${err.message || err}`);
+  }
+}
+
+async function startShareViewer() {
+  document.getElementById('app').classList.add('is-share-view', 'is-play');
+  document.body.classList.add('is-share-view');
+  hideBoot();
+  setShareWait(true, 'ホストの画面を待っています');
+  document.getElementById('play-hud')?.classList.remove('hidden');
+  stage.classList.add('is-play');
+  shareRole = 'viewer';
+  updateShareStatus();
+  refreshHint();
+  try {
+    await ensureShareLink();
+    shareLink.sendHello({ role: 'viewer', started: Date.now() });
+  } catch (err) {
+    setShareWait(true, `接続できません: ${err.message || err}`);
+  }
+}
+
 function onDown(e) {
+  if (isShareViewer()) return;
   if (e.button === 1 || spaceDown || e.button === 2) {
     panning = true;
     lastPan = { x: e.clientX, y: e.clientY };
@@ -916,6 +1157,7 @@ function paintAt(x, y) {
 }
 
 function onMove(e) {
+  if (isShareViewer()) return;
   if (panning && lastPan) {
     const { vw } = viewSize();
     const dx = e.clientX - lastPan.x;
@@ -957,6 +1199,10 @@ function onUp() {
 }
 
 function onWheel(e) {
+  if (isShareViewer()) {
+    e.preventDefault();
+    return;
+  }
   e.preventDefault();
   const { vw, vh } = viewSize();
   const r = canvas.getBoundingClientRect();
@@ -1053,28 +1299,31 @@ function confirmModal(text, onOk) {
 
 function tick(t) {
   const { vw, vh } = viewSize();
-  if (mode === 'play') followPlayer();
-  if (mode === 'boot') {
+  if (!isShareViewer() && mode === 'play') followPlayer();
+  pumpShare(t);
+  if (mode === 'boot' && !isShareViewer()) {
     requestAnimationFrame(tick);
     return;
   }
-  if (mode === 'play' && heldMove && t >= moveCooldown) {
+  if (!isShareViewer() && mode === 'play' && heldMove && t >= moveCooldown) {
     tryMove(heldMove);
     moveCooldown = t + 160;
   }
-  render(ctx, {
-    world,
-    layerId: mode === 'play' ? world.play.layerId : layerId,
-    mode,
-    cam,
-    vw,
-    vh,
-    hover: mode === 'create' ? hover : null,
-    selection: mode === 'create' ? selection : null,
-    dragRect,
-    useFog: mode === 'play' || maskPreview,
-    pendingLink,
-  });
+  if (mode !== 'boot') {
+    render(ctx, {
+      world,
+      layerId: mode === 'play' ? world.play.layerId : layerId,
+      mode,
+      cam,
+      vw,
+      vh,
+      hover: mode === 'create' || isShareViewer() ? hover : null,
+      selection: mode === 'create' && !isShareViewer() ? selection : null,
+      dragRect: isShareViewer() ? null : dragRect,
+      useFog: mode === 'play' || maskPreview,
+      pendingLink: isShareViewer() ? null : pendingLink,
+    });
+  }
   requestAnimationFrame(tick);
 }
 
@@ -1145,6 +1394,8 @@ function resetExploration() {
   });
 }
 
+document.getElementById('btn-share').onclick = () => startHosting();
+document.getElementById('btn-share-hud').onclick = () => startHosting();
 document.getElementById('btn-create').onclick = () => setMode('create');
 document.getElementById('btn-play').onclick = () => setMode('play');
 document.getElementById('btn-exit-play').onclick = () => showBoot();
@@ -1305,10 +1556,14 @@ window.addEventListener('keydown', (e) => {
       document.getElementById('modal').classList.add('hidden');
       return;
     }
-    if (mode === 'play' && !document.fullscreenElement) {
+    if (mode === 'play' && !document.fullscreenElement && !isShareViewer()) {
       showBoot();
       return;
     }
+  }
+  if (isShareViewer()) {
+    if (e.code === 'Space') e.preventDefault();
+    return;
   }
   if (e.target.matches('input, select, textarea')) return;
   if (e.code === 'Space') {
@@ -1371,8 +1626,11 @@ document.addEventListener('fullscreenchange', () => {
   requestAnimationFrame(() => resizeCanvas());
 });
 
-window.addEventListener('beforeunload', () => saveWorld(world));
+window.addEventListener('beforeunload', () => {
+  if (!isShareViewer()) saveWorld(world);
+});
 
+if (shareRoute.isPlayView) startShareViewer();
 resizeCanvas();
 refreshAll();
 requestAnimationFrame(tick);

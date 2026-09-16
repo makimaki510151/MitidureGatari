@@ -109,6 +109,11 @@ body {
   letter-spacing: 0.06em;
 }
 .save-status.is-dirty { color: var(--gold); }
+.share-status {
+  font-size: 12px;
+  color: var(--gold);
+  letter-spacing: 0.06em;
+}
 
 button.ghost, button.icon-btn, .modal-actions button, .props button, .props select, .props input {
   font: inherit;
@@ -512,20 +517,26 @@ kbd {
 }
 
 #app.is-play .topbar,
-#app.is-play .sidebar {
+#app.is-play .sidebar,
+#app.is-share-view .topbar,
+#app.is-share-view .sidebar {
   display: none;
 }
-#app.is-play .workspace {
+#app.is-play .workspace,
+#app.is-share-view .workspace {
   grid-template-columns: 1fr;
 }
-#app.is-play .stage {
+#app.is-play .stage,
+#app.is-share-view .stage {
   background: #070605;
 }
-#app.is-play .floor-badge {
+#app.is-play .floor-badge,
+#app.is-share-view .floor-badge {
   top: 16px;
   left: 16px;
 }
-#app.is-play .stage-hint {
+#app.is-play .stage-hint,
+#app.is-share-view .stage-hint {
   left: 50%;
   transform: translateX(-50%);
   bottom: 20px;
@@ -543,6 +554,11 @@ kbd {
   z-index: 6;
 }
 .play-hud.hidden { display: none; }
+#app.is-share-view .play-hud #btn-exit-play,
+#app.is-share-view .play-hud #btn-share-hud,
+#app.is-share-view .play-hud #btn-reset-play-hud {
+  display: none;
+}
 .play-hud button {
   background: rgba(16, 14, 12, 0.82);
   color: var(--ink);
@@ -607,5 +623,6 @@ kbd {
 @media (max-width: 960px) {
   .workspace { grid-template-columns: 200px 1fr 220px; }
   .mode-switch button { min-width: 88px; padding: 8px 10px; }
-  #app.is-play .workspace { grid-template-columns: 1fr; }
+  #app.is-play .workspace,
+  #app.is-share-view .workspace { grid-template-columns: 1fr; }
 }
