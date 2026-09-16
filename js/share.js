@@ -1,4 +1,7 @@
 export const APP_ID = 'mitidure-gatari-dungeon';
+export const MAP_SNAP_QUIET_MS = 120;
+export const MAP_SNAP_MAX_WAIT_MS = 400;
+
 const TRYSTERO_MODS = [
   'https://esm.sh/trystero@0.21.8',
   'https://esm.run/trystero@0.21.8',
@@ -45,6 +48,44 @@ export function playViewUrl(room = 'default', loc = location) {
   return `${root}PlayView/#${encodeURIComponent(r)}`;
 }
 
+export function packPlay(play) {
+  if (!play) return null;
+  return {
+    layerId: play.layerId,
+    x: play.x | 0,
+    y: play.y | 0,
+    facing: play.facing || 'n',
+    revealed: play.revealed || {},
+    doorsOpen: play.doorsOpen || {},
+    doorNumsFlipped: play.doorNumsFlipped || {},
+    ignoreStairs: !!play.ignoreStairs,
+  };
+}
+
+export function viewFingerprint(payload) {
+  if (!payload) return '';
+  return JSON.stringify({
+    layerId: payload.layerId,
+    mode: payload.mode,
+    cam: payload.cam || null,
+    play: payload.play || null,
+    maskPreview: !!payload.maskPreview,
+    hover: payload.hover || null,
+  });
+}
+
+export function shareSeqShouldApply(incoming, applied) {
+  const seq = incoming | 0;
+  if (!seq) return true;
+  return seq >= (applied | 0);
+}
+
+export function shouldFlushMapSnap(now, { dirty, touchedAt, lastSnapAt }) {
+  if (!dirty) return false;
+  if (now - touchedAt >= MAP_SNAP_QUIET_MS) return true;
+  return lastSnapAt > 0 && now - lastSnapAt >= MAP_SNAP_MAX_WAIT_MS;
+}
+
 function attachPeerHook(room, name, fn) {
   const current = room[name];
   if (typeof current === 'function') {
@@ -69,6 +110,22 @@ function bindAction(room, name, handler) {
   return (data, target) => action.send(data, target ? { target } : undefined);
 }
 
+function latestWinsSend(send) {
+  let queued = null;
+  let scheduled = false;
+  return (data, target) => {
+    queued = { data, target };
+    if (scheduled) return;
+    scheduled = true;
+    queueMicrotask(() => {
+      scheduled = false;
+      const job = queued;
+      queued = null;
+      if (job) send(job.data, job.target);
+    });
+  };
+}
+
 async function loadJoinRoom() {
   let lastErr;
   for (const url of TRYSTERO_MODS) {
@@ -86,8 +143,9 @@ export async function connectShareRoom(roomId, handlers = {}) {
   const joinRoom = await loadJoinRoom();
   const room = joinRoom({ appId: APP_ID }, sanitizeRoom(roomId));
   const sendSnap = bindAction(room, 'snap', (data, peerId) => handlers.onSnap?.(data, peerId));
-  const sendView = bindAction(room, 'view', (data, peerId) => handlers.onView?.(data, peerId));
+  const sendViewRaw = bindAction(room, 'view', (data, peerId) => handlers.onView?.(data, peerId));
   const sendHello = bindAction(room, 'hello', (data, peerId) => handlers.onHello?.(data, peerId));
+  const sendView = latestWinsSend(sendViewRaw);
 
   attachPeerHook(room, 'onPeerJoin', (peerId) => handlers.onPeerJoin?.(peerId));
   attachPeerHook(room, 'onPeerLeave', (peerId) => handlers.onPeerLeave?.(peerId));
