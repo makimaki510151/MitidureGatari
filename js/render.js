@@ -12,6 +12,7 @@ import {
   isSweepDoor,
   isWalkable,
   isRegionRevealed,
+  objectZ,
   stairsAt,
 } from './world.js';
 
@@ -391,6 +392,89 @@ function drawMark(ctx, mark) {
   ctx.restore();
 }
 
+function drawHole(ctx, x, y) {
+  const px = x * CS;
+  const py = y * CS;
+  ctx.save();
+  ctx.fillStyle = 'rgba(8, 6, 4, 0.92)';
+  ctx.fillRect(px + 2, py + 2, CS - 4, CS - 4);
+  ctx.fillStyle = '#050403';
+  ctx.beginPath();
+  ctx.ellipse(px + CS / 2, py + CS / 2 + 1, 14, 13, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#110c08';
+  ctx.beginPath();
+  ctx.ellipse(px + CS / 2 + 1, py + CS / 2 + 4, 8, 6.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(212, 180, 131, 0.18)';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.ellipse(px + CS / 2, py + CS / 2, 14.5, 13.5, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function bridgeAxis(obj, x, y) {
+  const has = (dx, dy) => obj.cells.some((c) => c.x === x + dx && c.y === y + dy);
+  const ns = has(0, -1) || has(0, 1);
+  const ew = has(-1, 0) || has(1, 0);
+  if (ns && !ew) return 'ns';
+  if (ew && !ns) return 'ew';
+  return 'ns';
+}
+
+function drawBridge(ctx, obj, x, y) {
+  const px = x * CS;
+  const py = y * CS;
+  const axis = bridgeAxis(obj, x, y);
+  ctx.save();
+  ctx.fillStyle = '#3a2a1c';
+  if (axis === 'ns') ctx.fillRect(px + 7, py + 1, CS - 14, CS - 2);
+  else ctx.fillRect(px + 1, py + 7, CS - 2, CS - 14);
+  ctx.strokeStyle = '#2a1c12';
+  ctx.lineWidth = 1;
+  ctx.fillStyle = '#8a6a48';
+  if (axis === 'ns') {
+    for (let i = 0; i < 4; i++) {
+      const by = py + 3 + i * 9;
+      roundRect(ctx, px + 8, by, CS - 16, 7, 1.5);
+      ctx.fill();
+      ctx.stroke();
+    }
+  } else {
+    for (let i = 0; i < 4; i++) {
+      const bx = px + 3 + i * 9;
+      roundRect(ctx, bx, py + 8, 7, CS - 16, 1.5);
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+function drawObjects(ctx, layer, fogFn) {
+  const objects = [...(layer.objects || [])].sort((a, b) => {
+    const z = objectZ(a) - objectZ(b);
+    return z !== 0 ? z : 0;
+  });
+  for (const obj of objects) {
+    if (obj.kind !== 'hole') continue;
+    for (const c of obj.cells) {
+      if (!isWalkable(layer, c.x, c.y)) continue;
+      if (fogFn && !fogFn(c.x, c.y)) continue;
+      drawHole(ctx, c.x, c.y);
+    }
+  }
+  for (const obj of objects) {
+    if (obj.kind !== 'bridge') continue;
+    for (const c of obj.cells) {
+      if (!isWalkable(layer, c.x, c.y)) continue;
+      if (fogFn && !fogFn(c.x, c.y)) continue;
+      drawBridge(ctx, obj, c.x, c.y);
+    }
+  }
+}
+
 function doorVisible(world, layer, door, useFog) {
   if (!useFog) return true;
   const a = { x: door.x, y: door.y };
@@ -408,6 +492,7 @@ export function render(ctx, {
   hover,
   selection,
   dragRect,
+  objectPaint,
   useFog,
   pendingLink,
 }) {
@@ -438,6 +523,8 @@ export function render(ctx, {
       drawFloor(ctx, x, y, t);
     }
   }
+
+  drawObjects(ctx, layer, fogFn);
 
   for (let y = 0; y < layer.height; y++) {
     for (let x = 0; x < layer.width; x++) {
@@ -492,10 +579,26 @@ export function render(ctx, {
     const y = Math.min(dragRect.y0, dragRect.y1);
     const w = Math.abs(dragRect.x1 - dragRect.x0) + 1;
     const h = Math.abs(dragRect.y1 - dragRect.y0) + 1;
-    ctx.fillStyle = 'rgba(212, 180, 131, 0.16)';
+    const hole = dragRect.fill === 'hole';
+    const bridge = dragRect.fill === 'bridge';
+    ctx.fillStyle = hole
+      ? 'rgba(20, 10, 6, 0.45)'
+      : bridge
+        ? 'rgba(138, 106, 72, 0.35)'
+        : 'rgba(212, 180, 131, 0.16)';
     ctx.fillRect(x * CS, y * CS, w * CS, h * CS);
-    ctx.strokeStyle = '#d4b483';
+    ctx.strokeStyle = hole ? '#6a4030' : bridge ? '#c4a574' : '#d4b483';
     ctx.strokeRect(x * CS + 0.5, y * CS + 0.5, w * CS - 1, h * CS - 1);
+  }
+
+  if (objectPaint?.cells?.length) {
+    const hole = objectPaint.kind === 'hole';
+    ctx.fillStyle = hole ? 'rgba(20, 10, 6, 0.5)' : 'rgba(138, 106, 72, 0.4)';
+    ctx.strokeStyle = hole ? '#6a4030' : '#c4a574';
+    for (const c of objectPaint.cells) {
+      ctx.fillRect(c.x * CS, c.y * CS, CS, CS);
+      ctx.strokeRect(c.x * CS + 0.5, c.y * CS + 0.5, CS - 1, CS - 1);
+    }
   }
 
   if (selection) {
@@ -506,6 +609,10 @@ export function render(ctx, {
       ctx.strokeRect(selection.x * CS + 3, selection.y * CS + 3, CS - 6, CS - 6);
     } else if (selection.type === 'mark') {
       ctx.strokeRect(selection.x * CS + 3, selection.y * CS + 3, CS - 6, CS - 6);
+    } else if (selection.type === 'object') {
+      for (const c of selection.object.cells || []) {
+        ctx.strokeRect(c.x * CS + 3, c.y * CS + 3, CS - 6, CS - 6);
+      }
     } else if (selection.type === 'door') {
       const d = selection.door;
       if (d.side === 'n') ctx.strokeRect(d.x * CS + 2, d.y * CS - 7, CS - 4, 14);

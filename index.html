@@ -73,6 +73,14 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v3H13v11h-2V8H4z" /></svg>
               <span>文字</span>
             </button>
+            <button type="button" class="tool" data-tool="hole" title="穴 (H)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4zm3 3a5 4 0 0010 0" fill="none" stroke="currentColor" stroke-width="1.8"/><ellipse cx="12" cy="13" rx="5" ry="3"/></svg>
+              <span>穴</span>
+            </button>
+            <button type="button" class="tool" data-tool="bridge" title="橋 (B)">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h3v10H3zm15 0h3v10h-3zM7 9h10v2H7zm0 4h10v2H7z"/></svg>
+              <span>橋</span>
+            </button>
             <button type="button" class="tool" data-tool="spawn" title="開始位置">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 21V4l12 7-8 1v9z" /></svg>
               <span>開始位置</span>
@@ -94,6 +102,7 @@
             <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> マス移動</li>
             <li><kbd>F</kbd> 正面の扉を開閉。同じ番号の扉はまとめて動く</li>
             <li>階段・転移門は乗ると移動</li>
+            <li>穴の上は歩けない。橋が重なったマスは歩ける</li>
             <li>区画に入るとマスクがまとめて外れる</li>
             <li><kbd>Esc</kbd> タイトルに戻る</li>
           </ul>
