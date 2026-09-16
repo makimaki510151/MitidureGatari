@@ -6,7 +6,9 @@ import {
   STAIR_STYLES,
   bakeRegions,
   bakeWorld,
+  canStand,
   canWalk,
+  cellsInRect,
   cloneWorld,
   countDoorsWithNum,
   createDefaultWorld,
@@ -28,11 +30,15 @@ import {
   isWalkable,
   markAt,
   nearestEdge,
+  OBJECT_KINDS,
+  objectsAt,
   parseMapJson,
   parseDoorNum,
   parseGlyph,
   placeDoor,
+  placeObject,
   placeStairs,
+  removeObject,
   resetPlay,
   resizeLayer,
   revealAt,
@@ -40,6 +46,7 @@ import {
   setDoorOpen,
   setMark,
   stairsAt,
+  topObjectAt,
 } from './world.js';
 import { cellAtWorld, render, screenToWorld } from './render.js';
 
@@ -70,6 +77,8 @@ let pendingLink = null;
 let doorDraft = { appearance: 'wood', swing: 's', hinge: 'a', hidden: false, num: null };
 let stairsDraft = { style: 'up' };
 let markDraft = '1';
+let objectDraft = { kind: 'hole', shape: 'rect' };
+let objectPaint = null;
 let undoStack = [];
 let redoStack = [];
 let saveTimer = 0;
@@ -368,6 +377,32 @@ function refreshProps() {
     return;
   }
 
+  if (selection?.type === 'object') {
+    const obj = selection.object;
+    const kind = OBJECT_KINDS[obj.kind] || { name: obj.kind };
+    const stacked = objectsAt(l, selection.x, selection.y);
+    const stackIdx = stacked.findIndex((o) => o.id === obj.id);
+    propsTitle.textContent = kind.name;
+    propsEl.innerHTML = `
+      <p class="muted">マス単位のオブジェクトです。穴の上は歩けません。同じマスに橋が重なっていれば歩けます。視界の区画は部屋・道のままです。</p>
+      <p class="muted">マス数　${obj.cells.length}</p>
+      <p class="muted">例　(${obj.cells[0].x}, ${obj.cells[0].y})${obj.cells.length > 1 ? ' ほか' : ''}</p>
+      ${stacked.length > 1 ? `<p class="muted">このマスに ${stacked.length} 個重なっています（上から ${stackIdx + 1} 番目）。</p>
+      <button type="button" class="btn" id="cycle-obj">下のオブジェクトを選ぶ</button>` : ''}
+      <button type="button" class="btn" id="del-obj">このオブジェクトを削除</button>
+    `;
+    const cycle = propsEl.querySelector('#cycle-obj');
+    if (cycle) {
+      cycle.onclick = () => {
+        const next = stacked[(stackIdx - 1 + stacked.length) % stacked.length];
+        selection = { type: 'object', object: next, x: selection.x, y: selection.y };
+        refreshProps();
+      };
+    }
+    propsEl.querySelector('#del-obj').onclick = () => deleteSelection();
+    return;
+  }
+
   if (selection?.type === 'stairs') {
     const s = selection.stairs;
     const styles = Object.entries(STAIR_STYLES).map(([k, v]) =>
@@ -533,13 +568,47 @@ function refreshProps() {
     return;
   }
 
+  if (tool === 'hole' || tool === 'bridge') {
+    objectDraft.kind = tool;
+    const kinds = Object.entries(OBJECT_KINDS).map(([k, v]) =>
+      `<button type="button" data-k="${k}" class="${objectDraft.kind === k ? 'is-active' : ''}">${v.name}</button>`
+    ).join('');
+    propsTitle.textContent = objectDraft.kind === 'bridge' ? '橋を置く' : '穴を置く';
+    propsEl.innerHTML = `
+      <p class="muted">道や部屋の上に、マス単位で形と大きさを決めて置きます。同じマスに複数重ねられます。穴の上は歩けませんが、橋が重なったマスは歩けます。視界のグループは部屋や道の区画のままです。</p>
+      <label class="field">種類</label>
+      <div class="choice" id="obj-kind">${kinds}</div>
+      <label class="field">置き方</label>
+      <div class="choice" id="obj-shape">
+        <button type="button" data-k="rect" class="${objectDraft.shape === 'rect' ? 'is-active' : ''}">矩形</button>
+        <button type="button" data-k="paint" class="${objectDraft.shape === 'paint' ? 'is-active' : ''}">マス塗り</button>
+      </div>
+      <p class="muted">${objectDraft.shape === 'paint' ? 'ドラッグしたマスがひとつのオブジェクトになります。' : 'ドラッグした矩形の、歩けるマスがひとつのオブジェクトになります。'}</p>
+    `;
+    propsEl.querySelector('#obj-kind').onclick = (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      objectDraft.kind = b.dataset.k;
+      setTool(objectDraft.kind);
+    };
+    propsEl.querySelector('#obj-shape').onclick = (e) => {
+      const b = e.target.closest('button');
+      if (!b) return;
+      objectDraft.shape = b.dataset.k;
+      refreshProps();
+    };
+    return;
+  }
+
   const toolsHelp = {
-    select: '扉・階段・文字をクリックして編集します。Delete で削除、Ctrl+Z で元に戻します。',
+    select: '扉・階段・文字・穴・橋をクリックして編集します。Delete で削除、Ctrl+Z で元に戻します。',
     path: 'ドラッグして通路を描きます。同じ通路が扉で区切られていない限り、進入時にまとめて開示されます。',
     room: 'ドラッグして矩形の部屋を置きます。部屋はひとつの区画としてマスク解除されます。',
-    spawn: 'プレイ開始位置をクリックして指定します。',
+    spawn: 'プレイ開始位置をクリックして指定します。穴だけのマスには置けません。',
     mark: 'クリックして1文字を置く。キー入力でも文字を変えられます。',
-    erase: 'ドラッグしてマスを空にします。そのマスの階段や隣接する扉も消えます。',
+    hole: 'ドラッグして穴を置く。穴の上は歩けません。橋を重ねると歩けます。',
+    bridge: 'ドラッグして橋を置く。穴の上に重ねて使います。',
+    erase: 'ドラッグしてマスを空にします。そのマスの階段・文字・オブジェクトや隣接する扉も消えます。',
   };
 
   propsTitle.textContent = 'レイヤー';
@@ -628,6 +697,8 @@ function hintText() {
     stairs: 'クリックで階段 / 転移門',
     spawn: 'クリックで開始位置',
     mark: 'クリックで1文字を置く。キーで文字を変更',
+    hole: objectDraft.shape === 'paint' ? 'ドラッグで穴の形を塗る' : 'ドラッグで矩形の穴',
+    bridge: objectDraft.shape === 'paint' ? 'ドラッグで橋の形を塗る' : 'ドラッグで矩形の橋',
     erase: 'ドラッグで消去',
   };
   const pos = hover ? `　(${hover.x}, ${hover.y})` : '';
@@ -665,6 +736,7 @@ function showBoot() {
   selection = null;
   pendingLink = null;
   dragRect = null;
+  objectPaint = null;
   refreshHint();
 }
 
@@ -712,6 +784,7 @@ function setMode(next) {
   selection = null;
   pendingLink = null;
   dragRect = null;
+  objectPaint = null;
   if (mode === 'play') {
     layerId = world.play.layerId;
     ensurePlay(world);
@@ -751,6 +824,7 @@ async function exitBrowserFullscreen() {
 function setTool(next) {
   tool = next;
   selection = null;
+  if (next === 'hole' || next === 'bridge') objectDraft.kind = next;
   for (const b of document.querySelectorAll('.tool')) {
     b.classList.toggle('is-active', b.dataset.tool === tool);
   }
@@ -769,6 +843,8 @@ function hitTest(c) {
     const door = findDoor(l, c.x, c.y, edge);
     if (door) return { type: 'door', door };
   }
+  const obj = topObjectAt(l, c.x, c.y);
+  if (obj) return { type: 'object', object: obj, x: c.x, y: c.y };
   const mark = markAt(l, c.x, c.y);
   if (mark) return { type: 'mark', mark, x: mark.x, y: mark.y };
   return { type: 'cell', x: c.x, y: c.y };
@@ -784,6 +860,8 @@ function deleteSelection() {
     l.stairs = l.stairs.filter((s) => s.id !== selection.stairs.id);
   } else if (selection.type === 'mark') {
     setMark(l, selection.x, selection.y, '');
+  } else if (selection.type === 'object') {
+    removeObject(l, selection.object.id);
   }
   selection = null;
   bakeRegions(l);
@@ -794,7 +872,7 @@ function deleteSelection() {
 function applyPendingLink(c) {
   const from = getLayer(world, pendingLink.fromLayer);
   const st = from.stairs.find((s) => s.id === pendingLink.stairsId);
-  if (!st || !isWalkable(layer(), c.x, c.y)) {
+  if (!st || !canStand(layer(), c.x, c.y)) {
     toast('歩けるマスを指定してください');
     return;
   }
@@ -845,7 +923,20 @@ function onDown(e) {
 
   if (tool === 'room') {
     pushUndo();
-    dragRect = { x0: c.x, y0: c.y, x1: c.x, y1: c.y };
+    dragRect = { x0: c.x, y0: c.y, x1: c.x, y1: c.y, fill: 'room' };
+    return;
+  }
+
+  if (tool === 'hole' || tool === 'bridge') {
+    objectDraft.kind = tool;
+    pushUndo();
+    if (objectDraft.shape === 'paint') {
+      painting = true;
+      objectPaint = { kind: tool, cells: [] };
+      paintAt(c.x, c.y);
+      return;
+    }
+    dragRect = { x0: c.x, y0: c.y, x1: c.x, y1: c.y, fill: tool };
     return;
   }
 
@@ -887,7 +978,7 @@ function onDown(e) {
   }
 
   if (tool === 'spawn') {
-    if (!isWalkable(layer(), c.x, c.y)) {
+    if (!canStand(layer(), c.x, c.y)) {
       toast('歩けるマスを指定してください');
       return;
     }
@@ -911,6 +1002,11 @@ function paintAt(x, y) {
     if (!isWalkable(l, x, y)) return;
     const next = setMark(l, x, y, markDraft);
     selection = next ? { type: 'mark', mark: next, x: next.x, y: next.y } : null;
+  } else if ((tool === 'hole' || tool === 'bridge') && objectPaint) {
+    if (!isWalkable(l, x, y)) return;
+    if (objectPaint.cells.some((c) => c.x === x && c.y === y)) return;
+    objectPaint.cells.push({ x, y });
+    return;
   }
   markDirty();
 }
@@ -936,6 +1032,21 @@ function onMove(e) {
   }
 }
 
+function finishObject(kind, cells) {
+  const l = layer();
+  const obj = placeObject(l, kind, cells);
+  if (!obj) {
+    undoStack.pop();
+    toast('歩けるマスに置いてください');
+    selection = null;
+  } else {
+    const c0 = obj.cells[0];
+    selection = { type: 'object', object: obj, x: c0.x, y: c0.y };
+    markDirty();
+    refreshProps();
+  }
+}
+
 function onUp() {
   if (panning) {
     panning = false;
@@ -944,14 +1055,23 @@ function onUp() {
   }
   if (dragRect) {
     const l = layer();
-    const x = Math.min(dragRect.x0, dragRect.x1);
-    const y = Math.min(dragRect.y0, dragRect.y1);
-    const w = Math.abs(dragRect.x1 - dragRect.x0) + 1;
-    const h = Math.abs(dragRect.y1 - dragRect.y0) + 1;
-    fillRect(l, x, y, w, h, CELL.ROOM);
-    bakeRegions(l);
-    markDirty();
+    const fill = dragRect.fill || 'room';
+    if (fill === 'hole' || fill === 'bridge') {
+      finishObject(fill, cellsInRect(dragRect.x0, dragRect.y0, dragRect.x1, dragRect.y1));
+    } else {
+      const x = Math.min(dragRect.x0, dragRect.x1);
+      const y = Math.min(dragRect.y0, dragRect.y1);
+      const w = Math.abs(dragRect.x1 - dragRect.x0) + 1;
+      const h = Math.abs(dragRect.y1 - dragRect.y0) + 1;
+      fillRect(l, x, y, w, h, CELL.ROOM);
+      bakeRegions(l);
+      markDirty();
+    }
     dragRect = null;
+  }
+  if (objectPaint) {
+    finishObject(objectPaint.kind, objectPaint.cells);
+    objectPaint = null;
   }
   painting = false;
 }
@@ -987,6 +1107,8 @@ function tryMove(dir) {
       if (!isSecretDoor(door)) toast('扉が閉まっている');
     } else if (door && isSweepDoor(door) && isDoorOpen(world, door)) {
       toast('振れ扉が通路を塞いでいる');
+    } else if (isWalkable(l, nx, ny) && !canStand(l, nx, ny)) {
+      toast('穴があって進めない');
     }
     return;
   }
@@ -997,7 +1119,7 @@ function tryMove(dir) {
   const st = stairsAt(l, world.play.x, world.play.y);
   if (st && st.targetLayerId && !world.play.ignoreStairs) {
     const dest = getLayer(world, st.targetLayerId);
-    if (dest && isWalkable(dest, st.targetX, st.targetY)) {
+    if (dest && canStand(dest, st.targetX, st.targetY)) {
       world.play.layerId = dest.id;
       world.play.x = st.targetX;
       world.play.y = st.targetY;
@@ -1072,6 +1194,7 @@ function tick(t) {
     hover: mode === 'create' ? hover : null,
     selection: mode === 'create' ? selection : null,
     dragRect,
+    objectPaint,
     useFog: mode === 'play' || maskPreview,
     pendingLink,
   });
@@ -1284,6 +1407,8 @@ const toolKeys = {
   r: 'door',
   t: 'stairs',
   g: 'mark',
+  h: 'hole',
+  b: 'bridge',
   x: 'erase',
   1: 'select',
   2: 'path',
@@ -1293,6 +1418,8 @@ const toolKeys = {
   6: 'spawn',
   7: 'erase',
   8: 'mark',
+  9: 'hole',
+  0: 'bridge',
 };
 
 window.addEventListener('keydown', (e) => {
@@ -1326,7 +1453,7 @@ window.addEventListener('keydown', (e) => {
   }
   if (mode === 'create' && tool === 'mark' && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1) {
     const lower = e.key.toLowerCase();
-    if (!['q', 'e', 'r', 't', 'x', 'g'].includes(lower)) {
+    if (!['q', 'e', 'r', 't', 'x', 'g', 'h', 'b'].includes(lower)) {
       const ch = parseGlyph(e.key);
       if (ch) {
         markDraft = ch;

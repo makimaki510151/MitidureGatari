@@ -35,6 +35,11 @@ export const STAIR_STYLES = {
   portal: { name: '転移門', mark: '門' },
 };
 
+export const OBJECT_KINDS = {
+  hole: { name: '穴', z: 0 },
+  bridge: { name: '橋', z: 1 },
+};
+
 export function uid(prefix = '') {
   return prefix + Math.random().toString(36).slice(2, 9);
 }
@@ -53,6 +58,95 @@ export function isWalkable(layer, x, y) {
   return t === CELL.PATH || t === CELL.ROOM;
 }
 
+export function objectKind(kind) {
+  return OBJECT_KINDS[kind] ? kind : null;
+}
+
+export function objectZ(obj) {
+  return OBJECT_KINDS[obj?.kind]?.z ?? 0;
+}
+
+export function uniqueCells(cells) {
+  const seen = new Set();
+  const out = [];
+  for (const c of cells || []) {
+    const x = c.x | 0;
+    const y = c.y | 0;
+    const key = `${x},${y}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ x, y });
+  }
+  return out;
+}
+
+export function objectsAt(layer, x, y) {
+  if (!Array.isArray(layer.objects)) return [];
+  return layer.objects.filter((o) => o.cells.some((c) => c.x === x && c.y === y));
+}
+
+export function topObjectAt(layer, x, y) {
+  const list = objectsAt(layer, x, y);
+  if (!list.length) return null;
+  let best = list[0];
+  let bestI = 0;
+  for (let i = 1; i < list.length; i++) {
+    const o = list[i];
+    const z = objectZ(o);
+    const bz = objectZ(best);
+    if (z > bz || (z === bz && i > bestI)) {
+      best = o;
+      bestI = i;
+    }
+  }
+  return best;
+}
+
+export function cellHasObjectKind(layer, x, y, kind) {
+  return objectsAt(layer, x, y).some((o) => o.kind === kind);
+}
+
+export function canStand(layer, x, y) {
+  if (!isWalkable(layer, x, y)) return false;
+  if (cellHasObjectKind(layer, x, y, 'hole') && !cellHasObjectKind(layer, x, y, 'bridge')) return false;
+  return true;
+}
+
+export function placeObject(layer, kind, cells, extras = {}) {
+  const k = objectKind(kind);
+  if (!k) return null;
+  const next = uniqueCells(cells).filter((c) => isWalkable(layer, c.x, c.y));
+  if (!next.length) return null;
+  if (!Array.isArray(layer.objects)) layer.objects = [];
+  const obj = { id: extras.id || uid('O'), kind: k, cells: next };
+  layer.objects.push(obj);
+  return obj;
+}
+
+export function removeObject(layer, id) {
+  if (!Array.isArray(layer.objects)) return;
+  layer.objects = layer.objects.filter((o) => o.id !== id);
+}
+
+export function removeObjectCell(layer, x, y) {
+  if (!Array.isArray(layer.objects)) return;
+  layer.objects = layer.objects
+    .map((o) => ({ ...o, cells: o.cells.filter((c) => !(c.x === x && c.y === y)) }))
+    .filter((o) => o.cells.length);
+}
+
+export function cellsInRect(x0, y0, x1, y1) {
+  const xa = Math.min(x0, x1);
+  const xb = Math.max(x0, x1);
+  const ya = Math.min(y0, y1);
+  const yb = Math.max(y0, y1);
+  const cells = [];
+  for (let y = ya; y <= yb; y++) {
+    for (let x = xa; x <= xb; x++) cells.push({ x, y });
+  }
+  return cells;
+}
+
 export function createLayer({ id, name, kind = 'floor', width = 16, height = 12, cells } = {}) {
   return {
     id: id || uid('L'),
@@ -64,6 +158,7 @@ export function createLayer({ id, name, kind = 'floor', width = 16, height = 12,
     doors: [],
     stairs: [],
     marks: [],
+    objects: [],
   };
 }
 
@@ -249,7 +344,7 @@ export function stairsAt(layer, x, y) {
 }
 
 export function placeStairs(layer, x, y, extras = {}) {
-  if (!isWalkable(layer, x, y)) return null;
+  if (!canStand(layer, x, y)) return null;
   layer.stairs = layer.stairs.filter((s) => !(s.x === x && s.y === y));
   const st = {
     id: extras.id || uid('S'),
@@ -364,7 +459,7 @@ export function setDoorOpen(world, door, open) {
 export function canWalk(world, layer, x, y, dir) {
   const nx = x + DIRS[dir].x;
   const ny = y + DIRS[dir].y;
-  if (!isWalkable(layer, nx, ny)) return false;
+  if (!canStand(layer, nx, ny)) return false;
   const stored = storedDoorBetween(layer, x, y, nx, ny);
   if (stored && !isDoorOpen(world, stored)) return false;
   if (findOpenSweepBlocking(world, layer, edgeFromCells(x, y, nx, ny))) return false;
@@ -392,6 +487,12 @@ export function resizeLayer(layer, width, height) {
   });
   layer.stairs = layer.stairs.filter((s) => s.x >= 0 && s.y >= 0 && s.x < w && s.y < h);
   layer.marks = (layer.marks || []).filter((m) => m.x >= 0 && m.y >= 0 && m.x < w && m.y < h);
+  layer.objects = (layer.objects || [])
+    .map((o) => ({
+      ...o,
+      cells: o.cells.filter((c) => c.x >= 0 && c.y >= 0 && c.x < w && c.y < h),
+    }))
+    .filter((o) => o.cells.length);
 }
 
 export function eraseCell(layer, x, y) {
@@ -399,6 +500,7 @@ export function eraseCell(layer, x, y) {
   layer.cells[y][x] = CELL.VOID;
   layer.stairs = layer.stairs.filter((s) => !(s.x === x && s.y === y));
   layer.marks = (layer.marks || []).filter((m) => !(m.x === x && m.y === y));
+  removeObjectCell(layer, x, y);
   layer.doors = layer.doors.filter((d) => {
     if (d.x === x && d.y === y) return false;
     if (d.side === 'n' && d.x === x && d.y === y + 1) return false;
@@ -421,7 +523,7 @@ export function ensurePlay(world) {
     world.play = freshPlay(world.start.layerId, world.start.x, world.start.y);
   }
   const layer = getLayer(world, world.play.layerId);
-  if (!layer || !isWalkable(layer, world.play.x, world.play.y)) {
+  if (!layer || !canStand(layer, world.play.x, world.play.y)) {
     const startL = getLayer(world, world.start.layerId);
     world.play.layerId = startL.id;
     world.play.x = world.start.x;
@@ -431,7 +533,7 @@ export function ensurePlay(world) {
   }
   const here = getLayer(world, world.play.layerId);
   bakeRegions(here);
-  if (!isWalkable(here, world.play.x, world.play.y)) {
+  if (!canStand(here, world.play.x, world.play.y)) {
     const spawn = findFirstWalkable(here);
     if (spawn) {
       world.play.x = spawn.x;
@@ -444,7 +546,7 @@ export function ensurePlay(world) {
 export function findFirstWalkable(layer) {
   for (let y = 0; y < layer.height; y++) {
     for (let x = 0; x < layer.width; x++) {
-      if (isWalkable(layer, x, y)) return { x, y };
+      if (canStand(layer, x, y)) return { x, y };
     }
   }
   return null;
@@ -496,6 +598,16 @@ export function createDefaultWorld() {
   setMark(f1, 9, 0, '5');
   setMark(f1, 12, 10, '6');
 
+  placeObject(f1, 'hole', [
+    { x: 7, y: 5 }, { x: 8, y: 5 }, { x: 9, y: 5 }, { x: 10, y: 5 }, { x: 11, y: 5 },
+    { x: 7, y: 6 }, { x: 8, y: 6 }, { x: 9, y: 6 }, { x: 10, y: 6 }, { x: 11, y: 6 },
+  ], { id: 'O-hall-pit' });
+  placeObject(f1, 'bridge', [
+    { x: 9, y: 5 }, { x: 9, y: 6 },
+  ], { id: 'O-hall-bridge' });
+  placeObject(f1, 'hole', [{ x: 4, y: 6 }], { id: 'O-west-pit' });
+  placeObject(f1, 'bridge', [{ x: 4, y: 6 }], { id: 'O-west-bridge' });
+
   placeDoor(f1, 9, 12, 'n', { id: 'D-ent', appearance: 'wood', swing: 's', hinge: 'a', num: 1 });
   placeDoor(f1, 3, 6, 'w', { id: 'D-west', appearance: 'iron', swing: 'w', hinge: 'a', num: 1, defaultOpen: true });
   placeDoor(f1, 17, 6, 'w', { id: 'D-east', appearance: 'ornate', swing: 'e', hinge: 'b' });
@@ -508,6 +620,9 @@ export function createDefaultWorld() {
   fillRect(f2, 11, 3, 4, 5, CELL.ROOM);
   setMark(f2, 5, 5, '7');
   setMark(f2, 12, 5, '8');
+  placeObject(f2, 'hole', [
+    { x: 13, y: 4 }, { x: 14, y: 4 }, { x: 14, y: 5 },
+  ], { id: 'O-vault-pit' });
 
   const cave = createLayer({ id: 'LCave', name: '地下祭壇', kind: 'place', width: 10, height: 10 });
   fillRect(cave, 2, 3, 6, 6, CELL.ROOM);
@@ -612,6 +727,19 @@ export function normalizeWorld(data) {
       if (!ch || seen.has(key) || x < 0 || y < 0 || x >= layer.width || y >= layer.height) continue;
       seen.add(key);
       layer.marks.push({ x, y, ch });
+    }
+    const rawObjs = Array.isArray(layer.objects) ? layer.objects : [];
+    layer.objects = [];
+    const seenObj = new Set();
+    for (const o of rawObjs) {
+      const kind = objectKind(o.kind);
+      if (!kind) continue;
+      const id = o.id || uid('O');
+      if (seenObj.has(id)) continue;
+      seenObj.add(id);
+      const cells = uniqueCells(o.cells).filter((c) => inBounds(layer, c.x, c.y));
+      if (!cells.length) continue;
+      layer.objects.push({ id, kind, cells });
     }
   }
   const startLayer = getLayer(world, world.start?.layerId) || world.layers[0];
