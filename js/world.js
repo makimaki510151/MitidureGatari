@@ -436,6 +436,29 @@ export function isRegionRevealed(world, layer, x, y) {
   return (world.play.revealed[layer.id] || []).includes(rid);
 }
 
+export function revealedCellBounds(world, layer) {
+  if (!world?.play || !layer?.cells) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let count = 0;
+  for (let y = 0; y < layer.height; y++) {
+    for (let x = 0; x < layer.width; x++) {
+      const t = layer.cells[y][x];
+      if (t !== CELL.PATH && t !== CELL.ROOM) continue;
+      if (!isRegionRevealed(world, layer, x, y)) continue;
+      count += 1;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
+  }
+  if (!count) return null;
+  return { minX, minY, maxX, maxY, count };
+}
+
 export function isDoorOpen(world, door) {
   const n = doorNum(door);
   if (n !== null) {

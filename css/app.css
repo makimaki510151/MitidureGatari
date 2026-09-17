@@ -573,6 +573,18 @@ kbd {
   color: var(--gold);
 }
 
+.minimap {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  z-index: 5;
+  pointer-events: none;
+  border-radius: 4px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  image-rendering: auto;
+}
+.minimap.hidden { display: none !important; }
+
 .json-card {
   width: min(760px, calc(100% - 32px));
   max-height: calc(100vh - 40px);
@@ -625,4 +637,5 @@ kbd {
   .mode-switch button { min-width: 88px; padding: 8px 10px; }
   #app.is-play .workspace,
   #app.is-share-view .workspace { grid-template-columns: 1fr; }
+  .minimap { left: 10px; bottom: 10px; }
 }

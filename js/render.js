@@ -4,6 +4,7 @@ import {
   DIRS,
   DOOR_LOOKS,
   STAIR_STYLES,
+  cellHasObjectKind,
   doorInFront,
   doorNum,
   getLayer,
@@ -13,6 +14,7 @@ import {
   isWalkable,
   isRegionRevealed,
   objectZ,
+  revealedCellBounds,
   stairsAt,
 } from './world.js';
 
@@ -649,6 +651,159 @@ export function render(ctx, {
   }
 
   ctx.restore();
+}
+
+export function minimapBoxSize(vw, vh) {
+  return Math.round(Math.max(128, Math.min(208, vw * 0.24, vh * 0.34)));
+}
+
+export function drawMinimap(ctx, { world, layer, play, cam, vw, vh, size }) {
+  const s = size | 0;
+  if (!ctx || s < 24 || !layer) return;
+  ctx.clearRect(0, 0, s, s);
+  ctx.fillStyle = 'rgba(10, 8, 6, 0.92)';
+  ctx.fillRect(0, 0, s, s);
+
+  const bounds = revealedCellBounds(world, layer);
+  if (!bounds) {
+    ctx.fillStyle = 'rgba(239, 231, 216, 0.4)';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('未探索', s / 2, s / 2);
+    return;
+  }
+
+  const pad = 8;
+  const inner = s - pad * 2;
+  const cols = bounds.maxX - bounds.minX + 1;
+  const rows = bounds.maxY - bounds.minY + 1;
+  const cell = Math.max(2, Math.min(14, inner / Math.max(cols, rows)));
+  const mapW = cols * cell;
+  const mapH = rows * cell;
+  const ox = (s - mapW) / 2;
+  const oy = (s - mapH) / 2;
+  const px = (x) => ox + (x - bounds.minX) * cell;
+  const py = (y) => oy + (y - bounds.minY) * cell;
+  const revealed = (x, y) => isWalkable(layer, x, y) && isRegionRevealed(world, layer, x, y);
+
+  for (let y = bounds.minY; y <= bounds.maxY; y++) {
+    for (let x = bounds.minX; x <= bounds.maxX; x++) {
+      if (!revealed(x, y)) continue;
+      const room = layer.cells[y][x] === CELL.ROOM;
+      const hole = cellHasObjectKind(layer, x, y, 'hole') && !cellHasObjectKind(layer, x, y, 'bridge');
+      ctx.fillStyle = hole
+        ? '#1a100c'
+        : room
+          ? '#7d6b54'
+          : '#5a4e40';
+      ctx.fillRect(px(x), py(y), cell + 0.4, cell + 0.4);
+      if (cellHasObjectKind(layer, x, y, 'bridge')) {
+        ctx.fillStyle = 'rgba(196, 165, 116, 0.45)';
+        ctx.fillRect(px(x) + cell * 0.18, py(y) + cell * 0.38, cell * 0.64, cell * 0.24);
+      }
+    }
+  }
+
+  ctx.strokeStyle = '#2a241c';
+  ctx.lineWidth = Math.max(1, cell * 0.14);
+  ctx.lineCap = 'square';
+  ctx.beginPath();
+  for (let y = bounds.minY; y <= bounds.maxY; y++) {
+    for (let x = bounds.minX; x <= bounds.maxX; x++) {
+      if (!revealed(x, y)) continue;
+      const x0 = px(x);
+      const y0 = py(y);
+      if (!revealed(x, y - 1)) {
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x0 + cell, y0);
+      }
+      if (!revealed(x, y + 1)) {
+        ctx.moveTo(x0, y0 + cell);
+        ctx.lineTo(x0 + cell, y0 + cell);
+      }
+      if (!revealed(x - 1, y)) {
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x0, y0 + cell);
+      }
+      if (!revealed(x + 1, y)) {
+        ctx.moveTo(x0 + cell, y0);
+        ctx.lineTo(x0 + cell, y0 + cell);
+      }
+    }
+  }
+  ctx.stroke();
+
+  for (const door of layer.doors || []) {
+    const a = { x: door.x, y: door.y };
+    const b = door.side === 'n' ? { x: door.x, y: door.y - 1 } : { x: door.x - 1, y: door.y };
+    if (!revealed(a.x, a.y) && !revealed(b.x, b.y)) continue;
+    if (isSecretDoor(door) && !isDoorOpen(world, door)) continue;
+    const open = isDoorOpen(world, door);
+    ctx.strokeStyle = open ? '#c4a574' : '#6b5340';
+    ctx.lineWidth = Math.max(1.2, cell * 0.22);
+    ctx.beginPath();
+    if (door.side === 'n') {
+      ctx.moveTo(px(door.x) + cell * 0.2, py(door.y));
+      ctx.lineTo(px(door.x) + cell * 0.8, py(door.y));
+    } else {
+      ctx.moveTo(px(door.x), py(door.y) + cell * 0.2);
+      ctx.lineTo(px(door.x), py(door.y) + cell * 0.8);
+    }
+    ctx.stroke();
+  }
+
+  if (cell >= 5) {
+    ctx.fillStyle = '#d4b483';
+    ctx.font = `bold ${Math.max(6, Math.floor(cell * 0.72))}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (const mark of layer.marks || []) {
+      if (!revealed(mark.x, mark.y) || !mark.ch) continue;
+      ctx.fillText(String(mark.ch).slice(0, 1), px(mark.x) + cell / 2, py(mark.y) + cell / 2 + 0.5);
+    }
+    for (const st of layer.stairs || []) {
+      if (!revealed(st.x, st.y)) continue;
+      ctx.fillStyle = '#efe7d8';
+      ctx.fillText(STAIR_STYLES[st.style]?.mark?.[0] || '階', px(st.x) + cell / 2, py(st.y) + cell / 2 + 0.5);
+      ctx.fillStyle = '#d4b483';
+    }
+  }
+
+  if (cam && vw > 0 && vh > 0) {
+    const viewW = vw / cam.zoom / CS;
+    const viewH = vh / cam.zoom / CS;
+    const vx = cam.x / CS - viewW / 2;
+    const vy = cam.y / CS - viewH / 2;
+    ctx.strokeStyle = 'rgba(239, 231, 216, 0.45)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(px(vx), py(vy), viewW * cell, viewH * cell);
+  }
+
+  if (play && play.layerId === layer.id) {
+    const cx = px(play.x) + cell / 2;
+    const cy = py(play.y) + cell / 2;
+    const r = Math.max(2.2, cell * 0.32);
+    ctx.fillStyle = '#efe7d8';
+    ctx.strokeStyle = '#3a2a14';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    const d = DIRS[play.facing] || DIRS.n;
+    ctx.fillStyle = '#8a1e1e';
+    ctx.beginPath();
+    ctx.moveTo(cx + d.x * r * 1.55, cy + d.y * r * 1.55);
+    ctx.lineTo(cx + d.y * r * 0.7 - d.x * r * 0.2, cy - d.x * r * 0.7 - d.y * r * 0.2);
+    ctx.lineTo(cx - d.y * r * 0.7 - d.x * r * 0.2, cy + d.x * r * 0.7 - d.y * r * 0.2);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  ctx.strokeStyle = 'rgba(180, 150, 100, 0.55)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, 0.5, s - 1, s - 1);
 }
 
 export { CS, STAIR_STYLES };
