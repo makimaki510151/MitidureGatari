@@ -48,7 +48,7 @@ import {
   stairsAt,
   topObjectAt,
 } from './world.js';
-import { cellAtWorld, render, screenToWorld } from './render.js';
+import { cellAtWorld, drawMinimap, minimapBoxSize, render, screenToWorld } from './render.js';
 import {
   connectShareRoom,
   packPlay,
@@ -64,6 +64,8 @@ import {
 
 const canvas = document.getElementById('map');
 const ctx = canvas.getContext('2d');
+const minimapCanvas = document.getElementById('minimap');
+const minimapCtx = minimapCanvas.getContext('2d');
 const stage = document.querySelector('.stage');
 const hintEl = document.getElementById('stage-hint');
 const floorBadge = document.getElementById('floor-badge');
@@ -1577,6 +1579,32 @@ function confirmModal(text, onOk) {
   cancel.onclick = close;
 }
 
+function paintMinimap(vw, vh) {
+  const show = mode === 'play';
+  minimapCanvas.classList.toggle('hidden', !show);
+  if (!show) return;
+  const size = minimapBoxSize(vw, vh);
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const pw = Math.max(1, Math.floor(size * dpr));
+  const ph = Math.max(1, Math.floor(size * dpr));
+  if (minimapCanvas.width !== pw || minimapCanvas.height !== ph || minimapCanvas.style.width !== `${size}px`) {
+    minimapCanvas.width = pw;
+    minimapCanvas.height = ph;
+    minimapCanvas.style.width = `${size}px`;
+    minimapCanvas.style.height = `${size}px`;
+  }
+  minimapCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  drawMinimap(minimapCtx, {
+    world,
+    layer: getLayer(world, world.play.layerId),
+    play: world.play,
+    cam,
+    vw,
+    vh,
+    size,
+  });
+}
+
 function tick(t) {
   const { vw, vh } = viewSize();
   if (vw >= 8 && vh >= 8 && (canvas.style.width !== `${vw}px` || canvas.style.height !== `${vh}px`)) {
@@ -1607,6 +1635,9 @@ function tick(t) {
       useFog: mode === 'play' || maskPreview,
       pendingLink: isShareViewer() ? null : pendingLink,
     });
+    paintMinimap(vw, vh);
+  } else {
+    minimapCanvas.classList.add('hidden');
   }
   requestAnimationFrame(tick);
 }
