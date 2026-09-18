@@ -27,6 +27,9 @@ import {
   fillRect,
   findDoor,
   flowEdgeDest,
+  flowEdgeEnds,
+  flowBezier,
+  bezierPoint,
   flowNodeAt,
   flowNodeRect,
   getDoorBetween,
@@ -34,6 +37,7 @@ import {
   hitFlowEdge,
   hitFlowNode,
   isDoorOpen,
+  isFlowNodeRevealed,
   isFlowWorld,
   isSecretDoor,
   isSweepDoor,
@@ -42,6 +46,7 @@ import {
   nearestEdge,
   OBJECT_KINDS,
   objectsAt,
+  outgoingFlowEdges,
   parseMapJson,
   parseDoorNum,
   parseGlyph,
@@ -112,6 +117,7 @@ let objectPaint = null;
 let pendingEdge = null;
 let nodeDrag = null;
 let kindPick = null;
+let flowFx = null;
 let undoStack = [];
 let redoStack = [];
 let saveTimer = 0;
@@ -1360,6 +1366,9 @@ function applyShareView(payload, { fromSnap = false, skipPlay = false } = {}) {
     return;
   }
   if (!fromSnap && seq) appliedViewSeq = seq;
+  const prevNode = world.play?.nodeId;
+  const prevLayer = world.play?.layerId;
+  const prevRevealed = world.play?.revealed ? { ...world.play.revealed } : {};
   if (!skipPlay && payload.play) world.play = payload.play;
   const next = payload.mode === 'create' ? 'create' : 'play';
   if (next !== 'play' && payload.cam) {
@@ -1375,7 +1384,29 @@ function applyShareView(payload, { fromSnap = false, skipPlay = false } = {}) {
     refreshHint();
     refreshBadge();
   }
-  if (next === 'play') followPlayer();
+  if (next === 'play') {
+    const destLayer = getLayer(world, world.play?.layerId);
+    const destNode = destLayer ? flowNodeAt(destLayer, world.play?.nodeId) : null;
+    const jumped = isFlowWorld(world) && destNode && (world.play.nodeId !== prevNode || world.play.layerId !== prevLayer);
+    if (jumped && prevNode && !fromSnap) {
+      const fromLayer = getLayer(world, prevLayer);
+      const fromNode = flowNodeAt(fromLayer, prevNode);
+      const edge = fromLayer && destLayer
+        ? outgoingFlowEdges(fromLayer, prevNode).find((e) => e.to === destNode.id && (e.toLayerId || fromLayer.id) === destLayer.id)
+        : null;
+      beginFlowArrive({
+        fromLayer,
+        fromNode,
+        destLayer,
+        destNode,
+        edge,
+        firstVisit: destNode ? !(prevRevealed[destLayer.id] || []).includes(destNode.id) : false,
+        toastMsg: '',
+      });
+    } else {
+      followPlayer();
+    }
+  }
   setShareWait(false);
 }
 
@@ -1547,16 +1578,123 @@ function flowPointer(e) {
   return { wx: w.x, wy: w.y, node, edge };
 }
 
+function easeInOutCubic(t) {
+  const u = Math.max(0, Math.min(1, t));
+  return u < 0.5 ? 4 * u * u * u : 1 - ((-2 * u + 2) ** 3) / 2;
+}
+
+function flowBusy(now = performance.now()) {
+  return !!(flowFx && now < flowFx.start + flowFx.dur);
+}
+
+function clearFlowFx() {
+  if (flowFx?.toast) toast(flowFx.toast);
+  flowFx = null;
+}
+
+function destCamOf(node) {
+  const r = flowNodeRect(node);
+  return { x: r.x + r.w / 2, y: r.y + r.h / 2 };
+}
+
+function beginFlowArrive({ fromLayer, fromNode, destLayer, destNode, edge, firstVisit, toastMsg }) {
+  const now = performance.now();
+  const same = fromLayer?.id === destLayer?.id;
+  const ends = same && edge ? flowEdgeEnds(world, fromLayer, edge) : null;
+  const camTo = destCamOf(destNode);
+  const dist = Math.hypot(camTo.x - cam.x, camTo.y - cam.y);
+  const dur = Math.max(560, Math.min(920, 420 + dist * 1.05));
+  flowFx = {
+    start: now,
+    dur,
+    camFrom: { x: cam.x, y: cam.y },
+    camTo,
+    bezier: ends ? flowBezier(ends.x0, ends.y0, ends.x1, ends.y1) : null,
+    fromCenter: fromNode ? destCamOf(fromNode) : { x: cam.x, y: cam.y },
+    destCenter: camTo,
+    flipId: firstVisit ? destNode.id : null,
+    flipStart: now + dur * 0.42,
+    flipDur: Math.max(360, dur * 0.48),
+    fromLayerId: fromLayer?.id || destLayer.id,
+    toLayerId: destLayer.id,
+    toast: toastMsg || '',
+  };
+}
+
+function tickFlowCam(now) {
+  const l = getLayer(world, world.play.layerId);
+  const n = flowNodeAt(l, world.play.nodeId);
+  const target = n ? destCamOf(n) : null;
+  layerId = world.play.layerId;
+  if (flowFx) {
+    const u = easeInOutCubic((now - flowFx.start) / flowFx.dur);
+    cam.x = flowFx.camFrom.x + (flowFx.camTo.x - flowFx.camFrom.x) * u;
+    cam.y = flowFx.camFrom.y + (flowFx.camTo.y - flowFx.camFrom.y) * u;
+    if (now >= flowFx.start + flowFx.dur) clearFlowFx();
+    return;
+  }
+  if (!target) return;
+  cam.x += (target.x - cam.x) * 0.14;
+  cam.y += (target.y - cam.y) * 0.14;
+}
+
+function flowAnimForRender(now = performance.now()) {
+  if (!isFlowWorld(world) || mode !== 'play') return null;
+  if (!flowFx) return null;
+  const moveU = easeInOutCubic((now - flowFx.start) / flowFx.dur);
+  const flipT = flowFx.flipId
+    ? Math.max(0, Math.min(1, (now - flowFx.flipStart) / flowFx.flipDur))
+    : 1;
+  let playerAt = null;
+  const destToken = { x: flowFx.destCenter.x, y: flowFx.destCenter.y + 18 };
+  const fromToken = { x: flowFx.fromCenter.x, y: flowFx.fromCenter.y + 18 };
+  if (flowFx.bezier) {
+    const along = bezierPoint(flowFx.bezier, moveU);
+    if (moveU < 0.12) {
+      const k = moveU / 0.12;
+      playerAt = { x: fromToken.x + (along.x - fromToken.x) * k, y: fromToken.y + (along.y - fromToken.y) * k };
+    } else if (moveU > 0.86) {
+      const k = (moveU - 0.86) / 0.14;
+      playerAt = { x: along.x + (destToken.x - along.x) * k, y: along.y + (destToken.y - along.y) * k };
+    } else {
+      playerAt = along;
+    }
+  } else {
+    playerAt = {
+      x: fromToken.x + (destToken.x - fromToken.x) * moveU,
+      y: fromToken.y + (destToken.y - fromToken.y) * moveU,
+    };
+  }
+  return {
+    flipId: flowFx.flipId,
+    flipT,
+    playerAt,
+    hideOutgoing: !!(flowFx.flipId && flipT < 0.82),
+  };
+}
+
 function tryTravelEdge(edge) {
   if (!edge) return false;
+  if (flowBusy()) return false;
+  const fromLayer = getLayer(world, world.play.layerId);
+  const fromNode = flowNodeAt(fromLayer, world.play.nodeId);
   const destLayer = getLayer(world, edge.toLayerId || world.play.layerId);
-  const destName = flowNodeAt(destLayer, edge.to)?.name || destLayer?.name || '先';
+  const destNode = destLayer ? flowNodeAt(destLayer, edge.to) : null;
+  const destName = destNode?.name || destLayer?.name || '先';
+  const firstVisit = !!(destLayer && destNode && !isFlowNodeRevealed(world, destLayer, destNode.id));
   if (!travelFlowEdge(world, edge)) return false;
-  followPlayer();
+  beginFlowArrive({
+    fromLayer,
+    fromNode,
+    destLayer,
+    destNode,
+    edge,
+    firstVisit,
+    toastMsg: `${destName} へ進んだ`,
+  });
   refreshBadge();
   refreshProps();
   markDirty('view');
-  toast(`${destName} へ進んだ`);
   return true;
 }
 
@@ -1585,6 +1723,7 @@ function onFlowDown(e) {
   const pt = flowPointer(e);
   hover = pt;
   if (mode === 'play') {
+    if (flowBusy()) return;
     tryTravelAt(pt);
     return;
   }
@@ -1898,6 +2037,7 @@ function onWheel(e) {
 }
 
 function followPlayer() {
+  flowFx = null;
   if (isFlowWorld(world)) {
     const l = getLayer(world, world.play.layerId);
     const n = flowNodeAt(l, world.play.nodeId);
@@ -2019,19 +2159,23 @@ function paintMinimap(vw, vh) {
 }
 
 function tick(t) {
+  const now = performance.now();
   const { vw, vh } = viewSize();
   if (vw >= 8 && vh >= 8 && (canvas.style.width !== `${vw}px` || canvas.style.height !== `${vh}px`)) {
     resizeCanvas();
   }
-  if (mode === 'play') followPlayer();
-  pumpShare(t);
+  if (mode === 'play') {
+    if (isFlowWorld(world)) tickFlowCam(now);
+    else followPlayer();
+  }
+  pumpShare(now);
   if (mode === 'boot' && !isShareViewer()) {
     requestAnimationFrame(tick);
     return;
   }
-  if (!isShareViewer() && mode === 'play' && heldMove && t >= moveCooldown && !isFlowWorld(world)) {
+  if (!isShareViewer() && mode === 'play' && heldMove && now >= moveCooldown && !isFlowWorld(world)) {
     tryMove(heldMove);
-    moveCooldown = t + 160;
+    moveCooldown = now + 160;
   }
   if (mode !== 'boot') {
     render(ctx, {
@@ -2048,6 +2192,7 @@ function tick(t) {
       useFog: mode === 'play' || maskPreview,
       pendingLink: isShareViewer() ? null : pendingLink,
       pendingEdge: isShareViewer() ? null : pendingEdge,
+      flowAnim: flowAnimForRender(now),
     });
     paintMinimap(vw, vh);
   } else {
@@ -2360,6 +2505,7 @@ window.addEventListener('keydown', (e) => {
   }
   const map = { w: 'n', a: 'w', s: 's', d: 'e', ArrowUp: 'n', ArrowLeft: 'w', ArrowDown: 's', ArrowRight: 'e' };
   if (mode === 'play' && isFlowWorld(world)) {
+    if (flowBusy()) return;
     const n = e.key >= '1' && e.key <= '9' ? Number(e.key) : 0;
     if (n && !e.repeat) {
       e.preventDefault();
