@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>道連れ語り — 迷宮図</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect fill='%23110e0b' width='16' height='16'/><path fill='%23d4b483' d='M3 13h10v1H3zM4 4h8v8H4z'/><path fill='%23110e0b' d='M6 6h4v2H6z'/></svg>" />
-  <link rel="stylesheet" href="css/app.css" />
+  <link rel="stylesheet" href="css/app.css?v=flow2" />
   <link rel="modulepreload" href="https://esm.sh/trystero@0.21.8" />
   <link rel="modulepreload" href="https://esm.sh/trystero@0.21.8/torrent" />
 </head>
@@ -65,23 +65,23 @@
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zm2 2v12h12V6z" /></svg>
               <span>部屋</span>
             </button>
-            <button type="button" class="tool" data-tool="door" title="扉 (R)">
+            <button type="button" class="tool" data-tool="door" data-kind="grid" title="扉 (R)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18H6zm8 8a1.2 1.2 0 110 2.4A1.2 1.2 0 0114 11z" /></svg>
               <span>扉</span>
             </button>
-            <button type="button" class="tool" data-tool="stairs" title="階段 (T)">
+            <button type="button" class="tool" data-tool="stairs" data-kind="grid" title="階段 (T)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18h6v-4h4V10h4V6h2v6h-4v4h-4v4H4z" /></svg>
               <span>階段</span>
             </button>
-            <button type="button" class="tool" data-tool="mark" title="文字 (G)">
+            <button type="button" class="tool" data-tool="mark" data-kind="grid" title="文字 (G)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v3H13v11h-2V8H4z" /></svg>
               <span>文字</span>
             </button>
-            <button type="button" class="tool" data-tool="hole" title="穴 (H)">
+            <button type="button" class="tool" data-tool="hole" data-kind="grid" title="穴 (H)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4zm3 3a5 4 0 0010 0" fill="none" stroke="currentColor" stroke-width="1.8"/><ellipse cx="12" cy="13" rx="5" ry="3"/></svg>
               <span>穴</span>
             </button>
-            <button type="button" class="tool" data-tool="bridge" title="橋 (B)">
+            <button type="button" class="tool" data-tool="bridge" data-kind="grid" title="橋 (B)">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h3v10H3zm15 0h3v10h-3zM7 9h10v2H7zm0 4h10v2H7z"/></svg>
               <span>橋</span>
             </button>
@@ -102,12 +102,19 @@
 
         <section class="panel play-only hidden" id="play-help">
           <header class="panel-h"><h2>操作</h2></header>
-          <ul class="help-list">
+          <ul class="help-list help-grid">
             <li><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> マス移動</li>
             <li><kbd>F</kbd> 正面の扉を開閉。同じ番号の扉はまとめて動く</li>
             <li>階段・転移門は乗ると移動</li>
             <li>穴の上は歩けない。橋が重なったマスは歩ける</li>
             <li>区画に入るとマスクがまとめて外れる</li>
+            <li><kbd>Esc</kbd> タイトルに戻る</li>
+          </ul>
+          <ul class="help-list help-flow">
+            <li>今いる部屋から伸びる矢印が、すすめる道です</li>
+            <li>矢印または先の「？」をクリックして進む</li>
+            <li><kbd>1</kbd>–<kbd>9</kbd> でも同じ道を選べます</li>
+            <li>マスクの外れた部屋から伸びる道も開示されます。先の部屋は入るまで名前が見えません</li>
             <li><kbd>Esc</kbd> タイトルに戻る</li>
           </ul>
         </section>
@@ -149,7 +156,7 @@
         <button type="button" id="boot-play">プレイ</button>
         <button type="button" id="boot-create">クリエイト</button>
       </div>
-      <p class="boot-note">プレイはマップJSONを読み込みます。クリエイトは白紙から始めます。画面の共有は開始後に「画面を共有」から、同じ <code>PlayView/</code> URL で公開できます。</p>
+      <p class="boot-note">プレイはマップJSONを読み込みます。クリエイトはマス目の迷宮かフローチャートかを選んで白紙から始めます。画面の共有は開始後に「画面を共有」から、同じ <code>PlayView/</code> URL で公開できます。</p>
     </div>
     <input type="file" id="boot-file" accept="application/json,.json" hidden />
   </div>
@@ -169,6 +176,20 @@
   </div>
 
   <div id="toast" class="toast" role="status"></div>
+
+  <div id="kind-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="kind-text">
+    <div class="modal-card">
+      <p id="kind-text">マップの形を選んでください</p>
+      <div class="boot-actions kind-actions">
+        <button type="button" id="kind-grid">マス目の迷宮</button>
+        <button type="button" id="kind-flow">フローチャート</button>
+      </div>
+      <p class="boot-note">マス目は部屋の大きさをマスで描きます。フローチャートは名前だけの部屋と、そこから伸びる矢印（道）で進めます。</p>
+      <div class="modal-actions">
+        <button type="button" id="kind-cancel" class="ghost">やめる</button>
+      </div>
+    </div>
+  </div>
 
   <div id="modal" class="modal hidden" role="dialog" aria-modal="true">
     <div class="modal-card">
@@ -203,6 +224,6 @@
     </div>
   </div>
 
-  <script type="module" src="js/main.js"></script>
+  <script type="module" src="js/main.js?v=flow2"></script>
 </body>
 </html>

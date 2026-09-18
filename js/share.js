@@ -75,6 +75,7 @@ export function packPlay(play) {
     x: play.x | 0,
     y: play.y | 0,
     facing: play.facing || 'n',
+    nodeId: play.nodeId || null,
     revealed: play.revealed || {},
     doorsOpen: play.doorsOpen || {},
     doorNumsFlipped: play.doorNumsFlipped || {},

@@ -4,17 +4,29 @@ import {
   DIRS,
   DOOR_LOOKS,
   STAIR_STYLES,
+  bezierPoint,
   cellHasObjectKind,
   doorInFront,
   doorNum,
+  flowBezier,
+  flowEdgeEnds,
+  flowNodeAt,
+  flowNodeCenter,
+  flowNodeRect,
   getLayer,
   isDoorOpen,
+  isFlowEdgeRevealed,
+  isFlowNodeRevealed,
+  isFlowWorld,
   isSecretDoor,
   isSweepDoor,
   isWalkable,
   isRegionRevealed,
   objectZ,
+  outgoingFlowEdges,
+  playFlowChoices,
   revealedCellBounds,
+  revealedFlowBounds,
   stairsAt,
 } from './world.js';
 
@@ -484,6 +496,222 @@ function doorVisible(world, layer, door, useFog) {
   return isRegionRevealed(world, layer, a.x, a.y) || isRegionRevealed(world, layer, b.x, b.y);
 }
 
+function drawArrowHead(ctx, x, y, dx, dy, size = 10) {
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x - ux * size - uy * size * 0.55, y - uy * size + ux * size * 0.55);
+  ctx.lineTo(x - ux * size + uy * size * 0.55, y - uy * size - ux * size * 0.55);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawFlowBox(ctx, rect, { fill, stroke, title, muted = false, current = false, numbered = null }) {
+  ctx.save();
+  roundRect(ctx, rect.x, rect.y, rect.w, rect.h, 8);
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.strokeStyle = current ? '#efe7d8' : stroke;
+  ctx.lineWidth = current ? 2.4 : 1.6;
+  ctx.stroke();
+  if (current) {
+    ctx.strokeStyle = 'rgba(212, 180, 131, 0.55)';
+    ctx.lineWidth = 1;
+    roundRect(ctx, rect.x - 5, rect.y - 5, rect.w + 10, rect.h + 10, 10);
+    ctx.stroke();
+  }
+  ctx.fillStyle = muted ? '#7a7166' : '#efe7d8';
+  ctx.font = `600 ${muted ? 13 : 14}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const label = String(title || '').slice(0, 10);
+  ctx.fillText(label, rect.x + rect.w / 2, rect.y + rect.h / 2 + (numbered != null ? 6 : 0));
+  if (numbered != null) {
+    ctx.fillStyle = '#d4b483';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillText(String(numbered), rect.x + rect.w / 2, rect.y + 12);
+  }
+  ctx.restore();
+}
+
+function drawFlowEdgeLine(ctx, ends, { revealed = true, label = '', numbered = null, selected = false }) {
+  const b = flowBezier(ends.x0, ends.y0, ends.x1, ends.y1);
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(b.x0, b.y0);
+  ctx.quadraticCurveTo(b.cx, b.cy, b.x1, b.y1);
+  ctx.strokeStyle = selected ? '#efe7d8' : revealed ? '#c4a574' : '#4a4036';
+  ctx.lineWidth = selected ? 3.2 : 2.2;
+  ctx.stroke();
+  const near = bezierPoint(b, 0.88);
+  ctx.fillStyle = selected ? '#efe7d8' : revealed ? '#d4b483' : '#4a4036';
+  drawArrowHead(ctx, b.x1, b.y1, b.x1 - near.x, b.y1 - near.y, 11);
+  const mid = bezierPoint(b, 0.5);
+  const text = numbered != null ? `${numbered} ${label}`.trim() : label;
+  if (text) {
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const w = Math.min(140, ctx.measureText(text).width + 12);
+    ctx.fillStyle = 'rgba(16, 14, 12, 0.82)';
+    roundRect(ctx, mid.x - w / 2, mid.y - 9, w, 18, 4);
+    ctx.fill();
+    ctx.fillStyle = '#d4b483';
+    ctx.fillText(text, mid.x, mid.y + 0.5);
+  }
+  ctx.restore();
+}
+
+function renderFlow(ctx, {
+  world,
+  layerId,
+  mode,
+  cam,
+  vw,
+  vh,
+  hover,
+  selection,
+  useFog,
+  pendingEdge,
+}) {
+  const layer = getLayer(world, layerId);
+  const fog = !!(useFog || mode === 'play');
+  const currentId = world.play?.layerId === layer.id ? world.play.nodeId : null;
+  const choices = mode === 'play' ? playFlowChoices(world) : [];
+  const choiceIndex = new Map(choices.map((e, i) => [e.id, i + 1]));
+
+  ctx.save();
+  ctx.clearRect(0, 0, vw, vh);
+  ctx.fillStyle = fog ? '#070605' : '#14110e';
+  ctx.fillRect(0, 0, vw, vh);
+  ctx.translate(vw / 2, vh / 2);
+  ctx.scale(cam.zoom, cam.zoom);
+  ctx.translate(-cam.x, -cam.y);
+
+  if (!fog) {
+    ctx.strokeStyle = 'rgba(212, 180, 131, 0.06)';
+    ctx.lineWidth = 1 / cam.zoom;
+    ctx.beginPath();
+    for (let x = -400; x <= 2000; x += 40) {
+      ctx.moveTo(x, -400);
+      ctx.lineTo(x, 1400);
+    }
+    for (let y = -400; y <= 1400; y += 40) {
+      ctx.moveTo(-400, y);
+      ctx.lineTo(2000, y);
+    }
+    ctx.stroke();
+  }
+
+  const showEdge = (edge) => !fog || isFlowEdgeRevealed(world, layer, edge);
+  const showNode = (node) => !fog || isFlowNodeRevealed(world, layer, node.id);
+
+  for (const edge of layer.edges || []) {
+    if (!showEdge(edge)) continue;
+    const ends = flowEdgeEnds(world, layer, edge);
+    if (!ends) continue;
+    const n = choiceIndex.get(edge.id);
+    drawFlowEdgeLine(ctx, ends, {
+      revealed: true,
+      label: edge.label || '',
+      numbered: mode === 'play' ? n || null : null,
+      selected: selection?.type === 'edge' && selection.edge.id === edge.id,
+    });
+    if (ends.dest.kind === 'portal') {
+      const destKnown = !fog || !!(ends.dest.node && ends.dest.layer && isFlowNodeRevealed(world, ends.dest.layer, ends.dest.node.id));
+      drawFlowBox(ctx, ends.dest.rect, {
+        fill: destKnown ? '#2a2318' : '#161310',
+        stroke: destKnown ? '#8d7348' : '#3b3228',
+        title: destKnown ? (ends.dest.node?.name || '？') : '？',
+        muted: !destKnown,
+        numbered: mode === 'play' ? n || null : null,
+      });
+    } else if (fog && ends.dest.node && !showNode(ends.dest.node)) {
+      drawFlowBox(ctx, ends.dest.rect, {
+        fill: '#161310',
+        stroke: '#3b3228',
+        title: '？',
+        muted: true,
+        numbered: mode === 'play' ? n || null : null,
+      });
+    }
+  }
+
+  for (const node of layer.nodes || []) {
+    if (!showNode(node)) continue;
+    const rect = flowNodeRect(node);
+    const current = node.id === currentId;
+    drawFlowBox(ctx, rect, {
+      fill: current ? '#3a2a18' : '#2a2318',
+      stroke: '#8d7348',
+      title: node.name,
+      current,
+    });
+    if (mode === 'create' && world.start.layerId === layer.id && world.start.nodeId === node.id) {
+      ctx.save();
+      ctx.fillStyle = '#d4b483';
+      ctx.font = 'bold 10px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText('開始', rect.x + 8, rect.y - 4);
+      ctx.restore();
+    }
+  }
+
+  if (pendingEdge?.fromId) {
+    const src = flowNodeAt(layer, pendingEdge.fromId);
+    if (src) {
+      const rect = flowNodeRect(src);
+      const hx = pendingEdge.x ?? rect.x + rect.w;
+      const hy = pendingEdge.y ?? rect.y + rect.h / 2;
+      drawFlowEdgeLine(ctx, {
+        x0: rect.x + rect.w / 2,
+        y0: rect.y + rect.h / 2,
+        x1: hx,
+        y1: hy,
+      }, { revealed: true, label: '道' });
+    }
+  }
+
+  if (selection?.type === 'node') {
+    const rect = flowNodeRect(selection.node);
+    ctx.save();
+    ctx.setLineDash([5, 4]);
+    ctx.strokeStyle = '#efe7d8';
+    ctx.lineWidth = 1.6;
+    ctx.strokeRect(rect.x - 3, rect.y - 3, rect.w + 6, rect.h + 6);
+    ctx.restore();
+  }
+
+  if (hover?.node && mode === 'create') {
+    const rect = flowNodeRect(hover.node);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(212, 180, 131, 0.55)';
+    ctx.strokeRect(rect.x - 1, rect.y - 1, rect.w + 2, rect.h + 2);
+    ctx.restore();
+  }
+
+  if (mode === 'play' && currentId) {
+    const node = flowNodeAt(layer, currentId);
+    if (node) {
+      const c = flowNodeCenter(node);
+      ctx.save();
+      ctx.fillStyle = '#efe7d8';
+      ctx.strokeStyle = '#3a2a14';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y + 18, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  ctx.restore();
+}
+
 export function render(ctx, {
   world,
   layerId,
@@ -497,7 +725,12 @@ export function render(ctx, {
   objectPaint,
   useFog,
   pendingLink,
+  pendingEdge,
 }) {
+  if (isFlowWorld(world)) {
+    renderFlow(ctx, { world, layerId, mode, cam, vw, vh, hover, selection, useFog, pendingEdge });
+    return;
+  }
   const layer = getLayer(world, layerId);
   ctx.save();
   ctx.clearRect(0, 0, vw, vh);
@@ -657,9 +890,75 @@ export function minimapBoxSize(vw, vh) {
   return Math.round(Math.max(128, Math.min(208, vw * 0.24, vh * 0.34)));
 }
 
+function drawFlowMinimap(ctx, { world, layer, play, cam, vw, vh, size }) {
+  const s = size | 0;
+  ctx.clearRect(0, 0, s, s);
+  ctx.fillStyle = 'rgba(10, 8, 6, 0.92)';
+  ctx.fillRect(0, 0, s, s);
+  const bounds = revealedFlowBounds(world, layer);
+  if (!bounds) {
+    ctx.fillStyle = 'rgba(239, 231, 216, 0.4)';
+    ctx.font = '11px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('未探索', s / 2, s / 2);
+    return;
+  }
+  const pad = 10;
+  const inner = s - pad * 2;
+  const bw = Math.max(40, bounds.maxX - bounds.minX);
+  const bh = Math.max(40, bounds.maxY - bounds.minY);
+  const scale = Math.min(inner / bw, inner / bh);
+  const mapW = bw * scale;
+  const mapH = bh * scale;
+  const ox = (s - mapW) / 2;
+  const oy = (s - mapH) / 2;
+  const px = (x) => ox + (x - bounds.minX) * scale;
+  const py = (y) => oy + (y - bounds.minY) * scale;
+
+  for (const node of layer.nodes || []) {
+    if (!isFlowNodeRevealed(world, layer, node.id)) continue;
+    for (const edge of outgoingFlowEdges(layer, node.id)) {
+      const ends = flowEdgeEnds(world, layer, edge);
+      if (!ends) continue;
+      ctx.strokeStyle = '#c4a574';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(px(ends.x0), py(ends.y0));
+      ctx.lineTo(px(ends.x1), py(ends.y1));
+      ctx.stroke();
+      if (!ends.dest.node || !isFlowNodeRevealed(world, ends.dest.layer || layer, ends.dest.node.id)) {
+        const r = ends.dest.rect;
+        ctx.fillStyle = '#1a1612';
+        ctx.fillRect(px(r.x), py(r.y), r.w * scale, r.h * scale);
+      }
+    }
+  }
+  for (const node of layer.nodes || []) {
+    if (!isFlowNodeRevealed(world, layer, node.id)) continue;
+    const r = flowNodeRect(node);
+    ctx.fillStyle = play?.nodeId === node.id ? '#c4a574' : '#6d5b45';
+    ctx.fillRect(px(r.x), py(r.y), Math.max(4, r.w * scale), Math.max(4, r.h * scale));
+  }
+  if (cam && vw > 0 && vh > 0) {
+    const viewW = vw / cam.zoom;
+    const viewH = vh / cam.zoom;
+    ctx.strokeStyle = 'rgba(239, 231, 216, 0.45)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(px(cam.x - viewW / 2), py(cam.y - viewH / 2), viewW * scale, viewH * scale);
+  }
+  ctx.strokeStyle = 'rgba(180, 150, 100, 0.55)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0.5, 0.5, s - 1, s - 1);
+}
+
 export function drawMinimap(ctx, { world, layer, play, cam, vw, vh, size }) {
   const s = size | 0;
   if (!ctx || s < 24 || !layer) return;
+  if (isFlowWorld(world)) {
+    drawFlowMinimap(ctx, { world, layer, play, cam, vw, vh, size });
+    return;
+  }
   ctx.clearRect(0, 0, s, s);
   ctx.fillStyle = 'rgba(10, 8, 6, 0.92)';
   ctx.fillRect(0, 0, s, s);

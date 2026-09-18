@@ -1,6 +1,7 @@
 export const STORAGE_KEY = 'mitidure-gatari-dungeon-v1';
 export const CELL = { VOID: 0, PATH: 1, ROOM: 2 };
 export const CELL_SIZE = 40;
+export const FLOW_NODE = { w: 156, h: 56 };
 
 export const DIRS = {
   n: { x: 0, y: -1, opp: 's', label: '北' },
@@ -219,6 +220,419 @@ export function getLayer(world, id) {
 
 export function currentLayer(world, layerId) {
   return getLayer(world, layerId);
+}
+
+export function isFlowWorld(world) {
+  return !!world && world.kind === 'flow';
+}
+
+export function createFlowLayer({ id, name, kind = 'floor', nodes, edges } = {}) {
+  return {
+    id: id || uid('L'),
+    name: name || '1階',
+    kind,
+    nodes: Array.isArray(nodes) ? nodes : [],
+    edges: Array.isArray(edges) ? edges : [],
+  };
+}
+
+export function flowNodeAt(layer, id) {
+  if (!layer || !Array.isArray(layer.nodes) || !id) return null;
+  return layer.nodes.find((n) => n.id === id) || null;
+}
+
+export function flowEdgeAt(layer, id) {
+  if (!layer || !Array.isArray(layer.edges) || !id) return null;
+  return layer.edges.find((e) => e.id === id) || null;
+}
+
+export function flowNodeRect(node) {
+  return { x: node.x, y: node.y, w: FLOW_NODE.w, h: FLOW_NODE.h };
+}
+
+export function flowNodeCenter(node) {
+  return { x: node.x + FLOW_NODE.w / 2, y: node.y + FLOW_NODE.h / 2 };
+}
+
+export function pointInFlowRect(px, py, rect) {
+  return px >= rect.x && py >= rect.y && px <= rect.x + rect.w && py <= rect.y + rect.h;
+}
+
+export function nextFlowNodeName(layer) {
+  const n = (layer.nodes || []).length + 1;
+  return n === 1 ? '入口' : `部屋${n}`;
+}
+
+export function placeFlowNode(layer, x, y, extras = {}) {
+  if (!Array.isArray(layer.nodes)) layer.nodes = [];
+  const node = {
+    id: extras.id || uid('N'),
+    name: (extras.name && String(extras.name).trim()) || nextFlowNodeName(layer),
+    x: Number.isFinite(x) ? x : 0,
+    y: Number.isFinite(y) ? y : 0,
+  };
+  layer.nodes.push(node);
+  return node;
+}
+
+export function outgoingFlowEdges(layer, nodeId) {
+  if (!layer || !Array.isArray(layer.edges) || !nodeId) return [];
+  return layer.edges.filter((e) => e.from === nodeId);
+}
+
+export function incomingFlowEdges(layer, nodeId) {
+  if (!layer || !Array.isArray(layer.edges) || !nodeId) return [];
+  return layer.edges.filter((e) => e.to === nodeId && !e.toLayerId);
+}
+
+export function placeFlowEdge(layer, fromId, toId, extras = {}) {
+  if (!flowNodeAt(layer, fromId)) return null;
+  const toLayerId = extras.toLayerId || null;
+  if (!toLayerId && fromId === toId) return null;
+  if (!toLayerId && !flowNodeAt(layer, toId)) return null;
+  if (!Array.isArray(layer.edges)) layer.edges = [];
+  const dup = layer.edges.find((e) =>
+    e.from === fromId && e.to === toId && (e.toLayerId || null) === toLayerId
+  );
+  if (dup) return dup;
+  const edge = {
+    id: extras.id || uid('E'),
+    from: fromId,
+    to: toId,
+    label: extras.label ? String(extras.label) : '',
+  };
+  if (toLayerId) edge.toLayerId = toLayerId;
+  if (Number.isFinite(extras.ex)) edge.ex = extras.ex;
+  if (Number.isFinite(extras.ey)) edge.ey = extras.ey;
+  layer.edges.push(edge);
+  return edge;
+}
+
+export function removeFlowNode(world, layer, nodeId) {
+  if (!layer || !Array.isArray(layer.nodes)) return;
+  layer.nodes = layer.nodes.filter((n) => n.id !== nodeId);
+  layer.edges = (layer.edges || []).filter((e) => e.from !== nodeId && !(e.to === nodeId && !e.toLayerId));
+  if (!world) return;
+  for (const other of world.layers) {
+    if (other.id === layer.id || !Array.isArray(other.edges)) continue;
+    other.edges = other.edges.filter((e) => !(e.toLayerId === layer.id && e.to === nodeId));
+  }
+  if (world.start?.layerId === layer.id && world.start.nodeId === nodeId) {
+    world.start.nodeId = layer.nodes[0]?.id || null;
+  }
+}
+
+export function removeFlowEdge(layer, edgeId) {
+  if (!layer || !Array.isArray(layer.edges)) return;
+  layer.edges = layer.edges.filter((e) => e.id !== edgeId);
+}
+
+function rectEdgePoint(rect, towardX, towardY) {
+  const cx = rect.x + rect.w / 2;
+  const cy = rect.y + rect.h / 2;
+  const dx = towardX - cx;
+  const dy = towardY - cy;
+  if (dx === 0 && dy === 0) return { x: rect.x + rect.w, y: cy };
+  const hx = rect.w / 2;
+  const hy = rect.h / 2;
+  const ax = Math.abs(dx) < 1e-6 ? Infinity : hx / Math.abs(dx);
+  const ay = Math.abs(dy) < 1e-6 ? Infinity : hy / Math.abs(dy);
+  const t = Math.min(ax, ay);
+  return { x: cx + dx * t, y: cy + dy * t };
+}
+
+export function flowPortalRect(layer, edge) {
+  const src = flowNodeAt(layer, edge.from);
+  const c = src ? flowNodeCenter(src) : { x: 0, y: 0 };
+  const x = Number.isFinite(edge.ex) ? edge.ex : c.x + FLOW_NODE.w / 2 + 88;
+  const y = Number.isFinite(edge.ey) ? edge.ey : c.y;
+  return { x: x - 42, y: y - 22, w: 84, h: 44 };
+}
+
+export function flowEdgeDest(world, layer, edge) {
+  const destLayerId = edge.toLayerId || layer.id;
+  const destLayer = getLayer(world, destLayerId);
+  const node = destLayer ? flowNodeAt(destLayer, edge.to) : null;
+  const same = destLayerId === layer.id;
+  if (same && node) {
+    return { kind: 'node', layer: destLayer, node, rect: flowNodeRect(node) };
+  }
+  return {
+    kind: 'portal',
+    layer: destLayer,
+    node,
+    rect: flowPortalRect(layer, edge),
+  };
+}
+
+export function flowEdgeEnds(world, layer, edge) {
+  const src = flowNodeAt(layer, edge.from);
+  if (!src) return null;
+  const dest = flowEdgeDest(world, layer, edge);
+  const fromR = flowNodeRect(src);
+  const toR = dest.rect;
+  const toC = { x: toR.x + toR.w / 2, y: toR.y + toR.h / 2 };
+  const fromC = flowNodeCenter(src);
+  const start = rectEdgePoint(fromR, toC.x, toC.y);
+  const end = rectEdgePoint(toR, fromC.x, fromC.y);
+  return { x0: start.x, y0: start.y, x1: end.x, y1: end.y, dest };
+}
+
+export function flowBezier(x0, y0, x1, y1) {
+  const mx = (x0 + x1) / 2;
+  const my = (y0 + y1) / 2;
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  return {
+    x0,
+    y0,
+    cx: mx - dy * 0.18,
+    cy: my + dx * 0.18,
+    x1,
+    y1,
+  };
+}
+
+export function bezierPoint(b, t) {
+  const u = 1 - t;
+  return {
+    x: u * u * b.x0 + 2 * u * t * b.cx + t * t * b.x1,
+    y: u * u * b.y0 + 2 * u * t * b.cy + t * t * b.y1,
+  };
+}
+
+function dist2(ax, ay, bx, by) {
+  const dx = ax - bx;
+  const dy = ay - by;
+  return dx * dx + dy * dy;
+}
+
+export function hitFlowNode(layer, wx, wy) {
+  const nodes = layer.nodes || [];
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    if (pointInFlowRect(wx, wy, flowNodeRect(nodes[i]))) return nodes[i];
+  }
+  return null;
+}
+
+export function hitFlowEdge(world, layer, wx, wy, slack = 10) {
+  const lim = slack * slack;
+  for (const edge of layer.edges || []) {
+    const ends = flowEdgeEnds(world, layer, edge);
+    if (!ends) continue;
+    if (ends.dest?.kind === 'portal' && pointInFlowRect(wx, wy, ends.dest.rect)) return edge;
+    const b = flowBezier(ends.x0, ends.y0, ends.x1, ends.y1);
+    for (let i = 0; i <= 18; i++) {
+      const p = bezierPoint(b, i / 18);
+      if (dist2(wx, wy, p.x, p.y) <= lim) return edge;
+    }
+  }
+  return null;
+}
+
+export function hitFlowPortal(world, layer, wx, wy) {
+  for (const edge of layer.edges || []) {
+    const dest = flowEdgeDest(world, layer, edge);
+    if (dest.kind === 'portal' && pointInFlowRect(wx, wy, dest.rect)) return edge;
+  }
+  return null;
+}
+
+export function freshFlowPlay(layerId, nodeId) {
+  return {
+    layerId,
+    nodeId,
+    x: 0,
+    y: 0,
+    facing: 'n',
+    revealed: {},
+    doorsOpen: {},
+    doorNumsFlipped: {},
+    ignoreStairs: false,
+  };
+}
+
+export function isFlowNodeRevealed(world, layer, nodeId) {
+  if (!world?.play || !layer || !nodeId) return false;
+  return (world.play.revealed[layer.id] || []).includes(nodeId);
+}
+
+export function isFlowEdgeRevealed(world, layer, edge) {
+  if (!edge) return false;
+  return isFlowNodeRevealed(world, layer, edge.from);
+}
+
+export function revealFlowNode(world, layer, nodeId) {
+  if (!world?.play || !layer || !nodeId) return false;
+  if (!flowNodeAt(layer, nodeId)) return false;
+  const list = world.play.revealed[layer.id] || (world.play.revealed[layer.id] = []);
+  if (!list.includes(nodeId)) {
+    list.push(nodeId);
+    return true;
+  }
+  return false;
+}
+
+export function travelFlowEdge(world, edge) {
+  if (!world?.play || !edge) return false;
+  const fromLayer = getLayer(world, world.play.layerId);
+  if (!fromLayer || edge.from !== world.play.nodeId) return false;
+  if (!(fromLayer.edges || []).some((e) => e.id === edge.id)) return false;
+  const destLayer = getLayer(world, edge.toLayerId || fromLayer.id);
+  const dest = destLayer ? flowNodeAt(destLayer, edge.to) : null;
+  if (!dest) return false;
+  world.play.layerId = destLayer.id;
+  world.play.nodeId = dest.id;
+  revealFlowNode(world, destLayer, dest.id);
+  return true;
+}
+
+export function playFlowChoices(world) {
+  if (!isFlowWorld(world) || !world.play) return [];
+  const layer = getLayer(world, world.play.layerId);
+  return outgoingFlowEdges(layer, world.play.nodeId);
+}
+
+export function revealedFlowBounds(world, layer) {
+  if (!world?.play || !layer) return null;
+  const boxes = [];
+  for (const node of layer.nodes || []) {
+    if (!isFlowNodeRevealed(world, layer, node.id)) continue;
+    boxes.push(flowNodeRect(node));
+    for (const edge of outgoingFlowEdges(layer, node.id)) {
+      const dest = flowEdgeDest(world, layer, edge);
+      boxes.push(dest.rect);
+    }
+  }
+  if (!boxes.length) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const b of boxes) {
+    minX = Math.min(minX, b.x);
+    minY = Math.min(minY, b.y);
+    maxX = Math.max(maxX, b.x + b.w);
+    maxY = Math.max(maxY, b.y + b.h);
+  }
+  return { minX, minY, maxX, maxY, count: boxes.length };
+}
+
+export function ensureFlowPlay(world) {
+  const startLayer = getLayer(world, world.start?.layerId) || world.layers[0];
+  const startNode = flowNodeAt(startLayer, world.start?.nodeId) || startLayer.nodes[0] || null;
+  world.start = { layerId: startLayer.id, nodeId: startNode?.id || null };
+  if (!world.play) world.play = freshFlowPlay(world.start.layerId, world.start.nodeId);
+  world.play.revealed = world.play.revealed || {};
+  world.play.doorsOpen = world.play.doorsOpen || {};
+  world.play.doorNumsFlipped = world.play.doorNumsFlipped || {};
+  let layer = getLayer(world, world.play.layerId);
+  let node = flowNodeAt(layer, world.play.nodeId);
+  if (!layer || !node) {
+    world.play.layerId = world.start.layerId;
+    world.play.nodeId = world.start.nodeId;
+    layer = startLayer;
+    node = startNode;
+  }
+  if (node) revealFlowNode(world, layer, node.id);
+}
+
+function normalizeFlowWorld(data) {
+  const world = cloneWorld(data);
+  world.version = 1;
+  world.kind = 'flow';
+  world.layers = world.layers.map((raw) => {
+    const layer = createFlowLayer({
+      id: raw.id || uid('L'),
+      name: raw.name || '無名',
+      kind: raw.kind === 'place' ? 'place' : 'floor',
+    });
+    const seenN = new Set();
+    for (const n of raw.nodes || []) {
+      const id = n.id || uid('N');
+      if (seenN.has(id)) continue;
+      seenN.add(id);
+      layer.nodes.push({
+        id,
+        name: String(n.name || '部屋').trim() || '部屋',
+        x: Number(n.x) || 0,
+        y: Number(n.y) || 0,
+      });
+    }
+    const seenE = new Set();
+    for (const e of raw.edges || []) {
+      const id = e.id || uid('E');
+      if (seenE.has(id)) continue;
+      seenE.add(id);
+      if (!flowNodeAt(layer, e.from)) continue;
+      const toLayerId = e.toLayerId || null;
+      if (!toLayerId && !flowNodeAt(layer, e.to)) continue;
+      const edge = { id, from: e.from, to: e.to, label: e.label ? String(e.label) : '' };
+      if (toLayerId) edge.toLayerId = toLayerId;
+      if (Number.isFinite(Number(e.ex))) edge.ex = Number(e.ex);
+      if (Number.isFinite(Number(e.ey))) edge.ey = Number(e.ey);
+      layer.edges.push(edge);
+    }
+    return layer;
+  });
+  const startLayer = getLayer(world, world.start?.layerId) || world.layers[0];
+  const startNode = flowNodeAt(startLayer, world.start?.nodeId) || startLayer.nodes[0] || null;
+  world.start = { layerId: startLayer.id, nodeId: startNode?.id || null };
+  if (!world.play) world.play = freshFlowPlay(world.start.layerId, world.start.nodeId);
+  else {
+    world.play.revealed = world.play.revealed || {};
+    world.play.doorsOpen = world.play.doorsOpen || {};
+    world.play.doorNumsFlipped = world.play.doorNumsFlipped || {};
+    if (world.play.nodeId == null) world.play.nodeId = world.start.nodeId;
+  }
+  ensureFlowPlay(world);
+  return world;
+}
+
+export function createEmptyFlowWorld() {
+  const layer = createFlowLayer({ id: 'L1F', name: '1階', kind: 'floor' });
+  const start = placeFlowNode(layer, 80, 180, { id: 'N-start', name: '入口' });
+  const world = {
+    version: 1,
+    kind: 'flow',
+    layers: [layer],
+    start: { layerId: layer.id, nodeId: start.id },
+    play: freshFlowPlay(layer.id, start.id),
+  };
+  ensureFlowPlay(world);
+  return world;
+}
+
+export function createDefaultFlowWorld() {
+  const f1 = createFlowLayer({ id: 'L1F', name: '1階', kind: 'floor' });
+  const ent = placeFlowNode(f1, 40, 220, { id: 'N-ent', name: '入口' });
+  const guard = placeFlowNode(f1, 280, 220, { id: 'N-guard', name: '衛兵詰所' });
+  const hall = placeFlowNode(f1, 520, 220, { id: 'N-hall', name: '広間' });
+  const east = placeFlowNode(f1, 760, 80, { id: 'N-east', name: '東の回廊' });
+  const vault = placeFlowNode(f1, 760, 360, { id: 'N-vault', name: '宝物庫' });
+  const secret = placeFlowNode(f1, 1000, 360, { id: 'N-secret', name: '隠し部屋' });
+  placeFlowEdge(f1, ent.id, guard.id, { id: 'E-ent', label: '奥へ進む' });
+  placeFlowEdge(f1, guard.id, hall.id, { id: 'E-guard', label: '広間へ' });
+  placeFlowEdge(f1, hall.id, east.id, { id: 'E-east', label: '東の扉' });
+  placeFlowEdge(f1, hall.id, vault.id, { id: 'E-vault', label: '北の階段下' });
+  placeFlowEdge(f1, vault.id, secret.id, { id: 'E-secret', label: '壁の隙間' });
+
+  const cave = createFlowLayer({ id: 'LCave', name: '地下祭壇', kind: 'place' });
+  const altar = placeFlowNode(cave, 80, 160, { id: 'N-altar', name: '祭壇' });
+  const crawl = placeFlowNode(cave, 340, 160, { id: 'N-crawl', name: '抜け道' });
+  placeFlowEdge(cave, altar.id, crawl.id, { id: 'E-crawl', label: '暗い穴' });
+  placeFlowEdge(cave, crawl.id, hall.id, { id: 'E-back', label: '広間へ戻る', toLayerId: f1.id, ex: 520, ey: 80 });
+  placeFlowEdge(f1, hall.id, altar.id, { id: 'E-down', label: '下り階段', toLayerId: cave.id, ex: 600, ey: 80 });
+
+  const world = {
+    version: 1,
+    kind: 'flow',
+    layers: [f1, cave],
+    start: { layerId: f1.id, nodeId: ent.id },
+    play: freshFlowPlay(f1.id, ent.id),
+  };
+  ensureFlowPlay(world);
+  return world;
 }
 
 function normalizeEdge(x, y, side) {
@@ -538,10 +952,15 @@ export function nearestEdge(fx, fy) {
 }
 
 export function bakeWorld(world) {
+  if (isFlowWorld(world)) return;
   for (const layer of world.layers) bakeRegions(layer);
 }
 
 export function ensurePlay(world) {
+  if (isFlowWorld(world)) {
+    ensureFlowPlay(world);
+    return;
+  }
   if (!world.play) {
     world.play = freshPlay(world.start.layerId, world.start.x, world.start.y);
   }
@@ -576,7 +995,11 @@ export function findFirstWalkable(layer) {
 }
 
 export function resetPlay(world) {
-  world.play = freshPlay(world.start.layerId, world.start.x, world.start.y);
+  if (isFlowWorld(world)) {
+    world.play = freshFlowPlay(world.start.layerId, world.start.nodeId);
+  } else {
+    world.play = freshPlay(world.start.layerId, world.start.x, world.start.y);
+  }
   ensurePlay(world);
 }
 
@@ -585,6 +1008,7 @@ export function createEmptyWorld() {
   fillRect(layer, 6, 8, 4, 3, CELL.ROOM);
   const world = {
     version: 1,
+    kind: 'grid',
     layers: [layer],
     start: { layerId: layer.id, x: 7, y: 9 },
     play: freshPlay(layer.id, 7, 9),
@@ -686,6 +1110,7 @@ export function createDefaultWorld() {
 
   const world = {
     version: 1,
+    kind: 'grid',
     layers: [f1, f2, cave],
     start: { layerId: f1.id, x: 9, y: 13 },
     play: freshPlay(f1.id, 9, 13),
@@ -714,8 +1139,10 @@ export function normalizeWorld(data) {
   if (!data || !Array.isArray(data.layers) || !data.layers.length) {
     throw new Error('layers がありません');
   }
+  if (data.kind === 'flow') return normalizeFlowWorld(data);
   const world = cloneWorld(data);
   world.version = 1;
+  world.kind = 'grid';
   for (const layer of world.layers) {
     layer.id = layer.id || uid('L');
     layer.width = Math.max(4, Math.min(48, layer.width | 0));
