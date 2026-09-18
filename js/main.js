@@ -166,11 +166,21 @@ function layer() {
 function centerCamera() {
   const l = layer();
   if (isFlowWorld(world)) {
-    const node = flowNodeAt(l, world.start?.nodeId) || l.nodes?.[0] || null;
-    if (node) {
-      const r = flowNodeRect(node);
-      cam.x = r.x + r.w / 2;
-      cam.y = r.y + r.h / 2;
+    const nodes = l.nodes || [];
+    if (nodes.length) {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (const n of nodes) {
+        const r = flowNodeRect(n);
+        minX = Math.min(minX, r.x);
+        minY = Math.min(minY, r.y);
+        maxX = Math.max(maxX, r.x + r.w);
+        maxY = Math.max(maxY, r.y + r.h);
+      }
+      cam.x = (minX + maxX) / 2;
+      cam.y = (minY + maxY) / 2;
     } else {
       cam.x = 320;
       cam.y = 240;
@@ -968,7 +978,7 @@ function hintText() {
     bridge: objectDraft.shape === 'paint' ? 'ドラッグで橋の形を塗る' : 'ドラッグで矩形の橋',
     erase: 'ドラッグで消去',
   };
-  const pos = hover ? `　(${hover.x}, ${hover.y})` : '';
+  const pos = hover && Number.isFinite(hover.x) && Number.isFinite(hover.y) ? `　(${hover.x}, ${hover.y})` : '';
   return (map[tool] || '') + pos;
 }
 
@@ -1003,6 +1013,7 @@ function showBoot() {
   mode = 'boot';
   heldMove = null;
   selection = null;
+  hover = null;
   pendingLink = null;
   pendingEdge = null;
   nodeDrag = null;
@@ -1018,6 +1029,8 @@ function startCreate(kind = 'grid') {
   redoStack = [];
   hideBoot();
   centerCamera();
+  hover = null;
+  pendingEdge = null;
   setMode('create');
   markDirty();
   toast(kind === 'flow' ? 'フローチャートの白紙を開きました' : '白紙のマップを開きました');

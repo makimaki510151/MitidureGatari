@@ -620,15 +620,15 @@ function renderFlow(ctx, {
       selected: selection?.type === 'edge' && selection.edge.id === edge.id,
     });
     if (ends.dest.kind === 'portal') {
-      const destKnown = !!(ends.dest.node && ends.dest.layer && isFlowNodeRevealed(world, ends.dest.layer, ends.dest.node.id));
+      const destKnown = !fog || !!(ends.dest.node && ends.dest.layer && isFlowNodeRevealed(world, ends.dest.layer, ends.dest.node.id));
       drawFlowBox(ctx, ends.dest.rect, {
         fill: destKnown ? '#2a2318' : '#161310',
         stroke: destKnown ? '#8d7348' : '#3b3228',
-        title: destKnown ? (ends.dest.node.name || '？') : '？',
+        title: destKnown ? (ends.dest.node?.name || '？') : '？',
         muted: !destKnown,
         numbered: mode === 'play' ? n || null : null,
       });
-    } else if (ends.dest.node && !showNode(ends.dest.node)) {
+    } else if (fog && ends.dest.node && !showNode(ends.dest.node)) {
       drawFlowBox(ctx, ends.dest.rect, {
         fill: '#161310',
         stroke: '#3b3228',
