@@ -142,6 +142,7 @@ let sharePendingAck = new Set();
 let shareWantTimer = 0;
 let shareViewerStartedAt = 0;
 let shareHostStartedAt = 0;
+let viewerOwnZoom = false;
 
 function isShareViewer() {
   return shareRole === 'viewer';
@@ -957,7 +958,7 @@ function linkNewLayer(stairs, kind) {
 }
 
 function hintText() {
-  if (isShareViewer()) return 'ホストの画面を表示中';
+  if (isShareViewer()) return 'ホストの画面を表示中　ホイールで拡大縮小';
   if (mode === 'play') {
     return isFlowWorld(world) ? '矢印または 1〜9 で進む　Esc 戻る' : 'WASD 移動　F 扉　Esc 戻る';
   }
@@ -1374,7 +1375,7 @@ function applyShareView(payload, { fromSnap = false, skipPlay = false } = {}) {
   if (next !== 'play' && payload.cam) {
     cam.x = payload.cam.x;
     cam.y = payload.cam.y;
-    cam.zoom = payload.cam.zoom;
+    if (!isShareViewer() || !viewerOwnZoom) cam.zoom = payload.cam.zoom;
   }
   if (payload.layerId && next !== 'play') layerId = payload.layerId;
   hover = next === 'create' ? (payload.hover || null) : null;
@@ -1462,6 +1463,7 @@ async function ensureShareLink() {
       if (shareRole === 'viewer' && peerId === shareHostPeer) {
         shareHostPeer = null;
         appliedMapSeq = 0;
+        viewerOwnZoom = false;
         setShareWait(true, 'ホストが切断しました。再接続を待っています');
         startViewerWantLoop();
       }
@@ -1560,6 +1562,7 @@ async function startShareViewer() {
   shareRole = 'viewer';
   appliedViewSeq = 0;
   appliedMapSeq = 0;
+  viewerOwnZoom = false;
   updateShareStatus();
   refreshHint();
   try {
@@ -2018,10 +2021,6 @@ function onUp() {
 }
 
 function onWheel(e) {
-  if (isShareViewer()) {
-    e.preventDefault();
-    return;
-  }
   e.preventDefault();
   const { vw, vh } = viewSize();
   const r = canvas.getBoundingClientRect();
@@ -2033,6 +2032,10 @@ function onWheel(e) {
   const after = screenToWorld(cam, sx, sy, vw, vh);
   cam.x += before.x - after.x;
   cam.y += before.y - after.y;
+  if (isShareViewer()) {
+    viewerOwnZoom = true;
+    return;
+  }
   markShareView();
 }
 
