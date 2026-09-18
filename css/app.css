@@ -494,7 +494,7 @@ kbd {
   background: rgba(8, 6, 4, 0.72);
   display: grid;
   place-items: center;
-  z-index: 30;
+  z-index: 50;
 }
 .modal-card {
   width: min(420px, calc(100% - 32px));
