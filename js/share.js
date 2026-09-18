@@ -68,6 +68,26 @@ export function playViewUrl(room = 'default', loc = location) {
   return `${root}PlayView/#${encodeURIComponent(r)}`;
 }
 
+export const CAM_ZOOM_MIN = 0.4;
+export const CAM_ZOOM_MAX = 2.8;
+
+export function clampCamZoom(zoom) {
+  const z = Number(zoom);
+  if (!Number.isFinite(z) || z <= 0) return 1;
+  return Math.max(CAM_ZOOM_MIN, Math.min(CAM_ZOOM_MAX, z));
+}
+
+export function nextCamZoom(zoom, deltaY) {
+  const factor = deltaY < 0 ? 1.1 : 0.9;
+  return clampCamZoom(zoom * factor);
+}
+
+export function pickSharedCamZoom(localZoom, remoteZoom, { isViewer = false, viewerOwnZoom = false } = {}) {
+  if (isViewer && viewerOwnZoom) return clampCamZoom(localZoom);
+  if (remoteZoom != null && Number.isFinite(Number(remoteZoom))) return clampCamZoom(remoteZoom);
+  return clampCamZoom(localZoom);
+}
+
 export function packPlay(play) {
   if (!play) return null;
   return {

@@ -72,8 +72,10 @@ import {
 import { cellAtWorld, drawMinimap, minimapBoxSize, render, screenToWorld } from './render.js';
 import {
   connectShareRoom,
+  nextCamZoom,
   packPlay,
   parseShareRoute,
+  pickSharedCamZoom,
   playViewUrl,
   SHARE_HANDSHAKE_MS,
   shareSeqShouldApply,
@@ -1375,7 +1377,10 @@ function applyShareView(payload, { fromSnap = false, skipPlay = false } = {}) {
   if (next !== 'play' && payload.cam) {
     cam.x = payload.cam.x;
     cam.y = payload.cam.y;
-    if (!isShareViewer() || !viewerOwnZoom) cam.zoom = payload.cam.zoom;
+    cam.zoom = pickSharedCamZoom(cam.zoom, payload.cam.zoom, {
+      isViewer: isShareViewer(),
+      viewerOwnZoom,
+    });
   }
   if (payload.layerId && next !== 'play') layerId = payload.layerId;
   hover = next === 'create' ? (payload.hover || null) : null;
@@ -2027,8 +2032,7 @@ function onWheel(e) {
   const sx = e.clientX - r.left;
   const sy = e.clientY - r.top;
   const before = screenToWorld(cam, sx, sy, vw, vh);
-  const factor = e.deltaY < 0 ? 1.1 : 0.9;
-  cam.zoom = Math.max(0.4, Math.min(2.8, cam.zoom * factor));
+  cam.zoom = nextCamZoom(cam.zoom, e.deltaY);
   const after = screenToWorld(cam, sx, sy, vw, vh);
   cam.x += before.x - after.x;
   cam.y += before.y - after.y;
