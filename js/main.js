@@ -1578,9 +1578,9 @@ function flowPointer(e) {
   return { wx: w.x, wy: w.y, node, edge };
 }
 
-function easeOutCubic(t) {
+function easeInOutCubic(t) {
   const u = Math.max(0, Math.min(1, t));
-  return 1 - (1 - u) ** 3;
+  return u < 0.5 ? 4 * u * u * u : 1 - ((-2 * u + 2) ** 3) / 2;
 }
 
 function flowBusy(now = performance.now()) {
@@ -1601,16 +1601,20 @@ function beginFlowArrive({ fromLayer, fromNode, destLayer, destNode, edge, first
   const now = performance.now();
   const same = fromLayer?.id === destLayer?.id;
   const ends = same && edge ? flowEdgeEnds(world, fromLayer, edge) : null;
+  const camTo = destCamOf(destNode);
+  const dist = Math.hypot(camTo.x - cam.x, camTo.y - cam.y);
+  const dur = Math.max(560, Math.min(920, 420 + dist * 1.05));
   flowFx = {
     start: now,
-    dur: same ? 520 : 580,
+    dur,
     camFrom: { x: cam.x, y: cam.y },
-    camTo: destCamOf(destNode),
+    camTo,
     bezier: ends ? flowBezier(ends.x0, ends.y0, ends.x1, ends.y1) : null,
-    destCenter: destCamOf(destNode),
+    fromCenter: fromNode ? destCamOf(fromNode) : { x: cam.x, y: cam.y },
+    destCenter: camTo,
     flipId: firstVisit ? destNode.id : null,
-    flipStart: now + (same ? 150 : 180),
-    flipDur: 340,
+    flipStart: now + dur * 0.42,
+    flipDur: Math.max(360, dur * 0.48),
     fromLayerId: fromLayer?.id || destLayer.id,
     toLayerId: destLayer.id,
     toast: toastMsg || '',
@@ -1623,7 +1627,7 @@ function tickFlowCam(now) {
   const target = n ? destCamOf(n) : null;
   layerId = world.play.layerId;
   if (flowFx) {
-    const u = easeOutCubic((now - flowFx.start) / flowFx.dur);
+    const u = easeInOutCubic((now - flowFx.start) / flowFx.dur);
     cam.x = flowFx.camFrom.x + (flowFx.camTo.x - flowFx.camFrom.x) * u;
     cam.y = flowFx.camFrom.y + (flowFx.camTo.y - flowFx.camFrom.y) * u;
     if (now >= flowFx.start + flowFx.dur) clearFlowFx();
@@ -1637,29 +1641,35 @@ function tickFlowCam(now) {
 function flowAnimForRender(now = performance.now()) {
   if (!isFlowWorld(world) || mode !== 'play') return null;
   if (!flowFx) return null;
-  const moveU = easeOutCubic((now - flowFx.start) / flowFx.dur);
+  const moveU = easeInOutCubic((now - flowFx.start) / flowFx.dur);
   const flipT = flowFx.flipId
     ? Math.max(0, Math.min(1, (now - flowFx.flipStart) / flowFx.flipDur))
     : 1;
   let playerAt = null;
+  const destToken = { x: flowFx.destCenter.x, y: flowFx.destCenter.y + 18 };
+  const fromToken = { x: flowFx.fromCenter.x, y: flowFx.fromCenter.y + 18 };
   if (flowFx.bezier) {
-    const alongT = Math.min(1, moveU / 0.82);
-    const along = bezierPoint(flowFx.bezier, alongT);
-    if (moveU > 0.82) {
-      const k = (moveU - 0.82) / 0.18;
-      playerAt = {
-        x: along.x + (flowFx.destCenter.x - along.x) * k,
-        y: along.y + (flowFx.destCenter.y + 18 - along.y) * k,
-      };
+    const along = bezierPoint(flowFx.bezier, moveU);
+    if (moveU < 0.12) {
+      const k = moveU / 0.12;
+      playerAt = { x: fromToken.x + (along.x - fromToken.x) * k, y: fromToken.y + (along.y - fromToken.y) * k };
+    } else if (moveU > 0.86) {
+      const k = (moveU - 0.86) / 0.14;
+      playerAt = { x: along.x + (destToken.x - along.x) * k, y: along.y + (destToken.y - along.y) * k };
     } else {
       playerAt = along;
     }
+  } else {
+    playerAt = {
+      x: fromToken.x + (destToken.x - fromToken.x) * moveU,
+      y: fromToken.y + (destToken.y - fromToken.y) * moveU,
+    };
   }
   return {
     flipId: flowFx.flipId,
     flipT,
     playerAt,
-    hideOutgoing: !!(flowFx.flipId && flipT < 0.78),
+    hideOutgoing: !!(flowFx.flipId && flipT < 0.82),
   };
 }
 
@@ -2149,22 +2159,23 @@ function paintMinimap(vw, vh) {
 }
 
 function tick(t) {
+  const now = performance.now();
   const { vw, vh } = viewSize();
   if (vw >= 8 && vh >= 8 && (canvas.style.width !== `${vw}px` || canvas.style.height !== `${vh}px`)) {
     resizeCanvas();
   }
   if (mode === 'play') {
-    if (isFlowWorld(world)) tickFlowCam(t);
+    if (isFlowWorld(world)) tickFlowCam(now);
     else followPlayer();
   }
-  pumpShare(t);
+  pumpShare(now);
   if (mode === 'boot' && !isShareViewer()) {
     requestAnimationFrame(tick);
     return;
   }
-  if (!isShareViewer() && mode === 'play' && heldMove && t >= moveCooldown && !isFlowWorld(world)) {
+  if (!isShareViewer() && mode === 'play' && heldMove && now >= moveCooldown && !isFlowWorld(world)) {
     tryMove(heldMove);
-    moveCooldown = t + 160;
+    moveCooldown = now + 160;
   }
   if (mode !== 'boot') {
     render(ctx, {
@@ -2181,7 +2192,7 @@ function tick(t) {
       useFog: mode === 'play' || maskPreview,
       pendingLink: isShareViewer() ? null : pendingLink,
       pendingEdge: isShareViewer() ? null : pendingEdge,
-      flowAnim: flowAnimForRender(t),
+      flowAnim: flowAnimForRender(now),
     });
     paintMinimap(vw, vh);
   } else {
