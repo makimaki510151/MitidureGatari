@@ -508,27 +508,61 @@ function drawArrowHead(ctx, x, y, dx, dy, size = 10) {
   ctx.fill();
 }
 
-function drawFlowBox(ctx, rect, { fill, stroke, title, muted = false, current = false, numbered = null }) {
+function drawFlowBox(ctx, rect, {
+  fill,
+  stroke,
+  title,
+  muted = false,
+  current = false,
+  numbered = null,
+  flip = 1,
+}) {
+  const cx = rect.x + rect.w / 2;
+  const cy = rect.y + rect.h / 2;
+  const phase = Math.max(0, Math.min(1, flip));
+  const rad = phase * Math.PI;
+  const cos = Math.cos(rad);
+  const back = cos > 0;
+  const sx = Math.max(0.07, Math.abs(cos));
+  const faceTitle = back ? '？' : String(title || '').slice(0, 10);
+  const faceMuted = back || muted;
+  const faceFill = back ? '#161310' : fill;
+  const faceStroke = back ? '#3b3228' : stroke;
+
   ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(sx, 1 + (1 - sx) * 0.08);
+  ctx.translate(-cx, -cy);
+
   roundRect(ctx, rect.x, rect.y, rect.w, rect.h, 8);
-  ctx.fillStyle = fill;
+  ctx.fillStyle = faceFill;
   ctx.fill();
-  ctx.strokeStyle = current ? '#efe7d8' : stroke;
-  ctx.lineWidth = current ? 2.4 : 1.6;
+  ctx.strokeStyle = current && !back ? '#efe7d8' : faceStroke;
+  ctx.lineWidth = current && !back ? 2.4 : 1.6;
   ctx.stroke();
-  if (current) {
+  if (current && !back) {
     ctx.strokeStyle = 'rgba(212, 180, 131, 0.55)';
     ctx.lineWidth = 1;
     roundRect(ctx, rect.x - 5, rect.y - 5, rect.w + 10, rect.h + 10, 10);
     ctx.stroke();
   }
-  ctx.fillStyle = muted ? '#7a7166' : '#efe7d8';
-  ctx.font = `600 ${muted ? 13 : 14}px sans-serif`;
+  if (phase > 0.04 && phase < 0.96) {
+    ctx.fillStyle = 'rgba(239, 231, 216, 0.16)';
+    ctx.beginPath();
+    ctx.moveTo(rect.x + rect.w - 2, rect.y + 3);
+    ctx.lineTo(rect.x + rect.w - 18, rect.y + 3);
+    ctx.lineTo(rect.x + rect.w - 2, rect.y + 20);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = 'rgba(212, 180, 131, 0.28)';
+    ctx.fillRect(rect.x + rect.w - 7, rect.y + 8, 4, rect.h - 16);
+  }
+  ctx.fillStyle = faceMuted ? '#7a7166' : '#efe7d8';
+  ctx.font = `600 ${faceMuted ? 13 : 14}px sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  const label = String(title || '').slice(0, 10);
-  ctx.fillText(label, rect.x + rect.w / 2, rect.y + rect.h / 2 + (numbered != null ? 6 : 0));
-  if (numbered != null) {
+  ctx.fillText(faceTitle, rect.x + rect.w / 2, rect.y + rect.h / 2 + (numbered != null && !back ? 6 : 0));
+  if (numbered != null && !back) {
     ctx.fillStyle = '#d4b483';
     ctx.font = 'bold 11px sans-serif';
     ctx.fillText(String(numbered), rect.x + rect.w / 2, rect.y + 12);
@@ -575,6 +609,7 @@ function renderFlow(ctx, {
   selection,
   useFog,
   pendingEdge,
+  flowAnim,
 }) {
   const layer = getLayer(world, layerId);
   const fog = !!(useFog || mode === 'play');
@@ -605,8 +640,13 @@ function renderFlow(ctx, {
     ctx.stroke();
   }
 
-  const showEdge = (edge) => !fog || isFlowEdgeRevealed(world, layer, edge);
+  const showEdge = (edge) => {
+    if (fog && !isFlowEdgeRevealed(world, layer, edge)) return false;
+    if (flowAnim?.hideOutgoing && edge.from === currentId) return false;
+    return true;
+  };
   const showNode = (node) => !fog || isFlowNodeRevealed(world, layer, node.id);
+  const flipOf = (id) => (flowAnim?.flipId === id ? flowAnim.flipT : 1);
 
   for (const edge of layer.edges || []) {
     if (!showEdge(edge)) continue;
@@ -627,6 +667,7 @@ function renderFlow(ctx, {
         title: destKnown ? (ends.dest.node?.name || '？') : '？',
         muted: !destKnown,
         numbered: mode === 'play' ? n || null : null,
+        flip: destKnown && ends.dest.node ? flipOf(ends.dest.node.id) : 1,
       });
     } else if (fog && ends.dest.node && !showNode(ends.dest.node)) {
       drawFlowBox(ctx, ends.dest.rect, {
@@ -647,7 +688,8 @@ function renderFlow(ctx, {
       fill: current ? '#3a2a18' : '#2a2318',
       stroke: '#8d7348',
       title: node.name,
-      current,
+      current: current && flipOf(node.id) > 0.5,
+      flip: flipOf(node.id),
     });
     if (mode === 'create' && world.start.layerId === layer.id && world.start.nodeId === node.id) {
       ctx.save();
@@ -696,13 +738,13 @@ function renderFlow(ctx, {
   if (mode === 'play' && currentId) {
     const node = flowNodeAt(layer, currentId);
     if (node) {
-      const c = flowNodeCenter(node);
+      const c = flowAnim?.playerAt || { x: flowNodeCenter(node).x, y: flowNodeCenter(node).y + 18 };
       ctx.save();
       ctx.fillStyle = '#efe7d8';
       ctx.strokeStyle = '#3a2a14';
       ctx.lineWidth = 1.4;
       ctx.beginPath();
-      ctx.arc(c.x, c.y + 18, 7, 0, Math.PI * 2);
+      ctx.arc(c.x, c.y, 7, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
       ctx.restore();
@@ -726,9 +768,10 @@ export function render(ctx, {
   useFog,
   pendingLink,
   pendingEdge,
+  flowAnim,
 }) {
   if (isFlowWorld(world)) {
-    renderFlow(ctx, { world, layerId, mode, cam, vw, vh, hover, selection, useFog, pendingEdge });
+    renderFlow(ctx, { world, layerId, mode, cam, vw, vh, hover, selection, useFog, pendingEdge, flowAnim });
     return;
   }
   const layer = getLayer(world, layerId);
