@@ -1,0 +1,130 @@
+{
+  "version": 1,
+  "kind": "flow",
+  "layers": [
+    {
+      "id": "L1F",
+      "name": "1階",
+      "kind": "floor",
+      "nodes": [
+        {
+          "id": "N-ent",
+          "name": "入口",
+          "x": 40,
+          "y": 220
+        },
+        {
+          "id": "N-guard",
+          "name": "衛兵詰所",
+          "x": 280,
+          "y": 220
+        },
+        {
+          "id": "N-hall",
+          "name": "広間",
+          "x": 520,
+          "y": 220
+        },
+        {
+          "id": "N-east",
+          "name": "東の回廊",
+          "x": 760,
+          "y": 80
+        },
+        {
+          "id": "N-vault",
+          "name": "宝物庫",
+          "x": 760,
+          "y": 360
+        },
+        {
+          "id": "N-secret",
+          "name": "隠し部屋",
+          "x": 1000,
+          "y": 360
+        }
+      ],
+      "edges": [
+        {
+          "id": "E-ent",
+          "from": "N-ent",
+          "to": "N-guard",
+          "label": "奥へ進む"
+        },
+        {
+          "id": "E-guard",
+          "from": "N-guard",
+          "to": "N-hall",
+          "label": "広間へ"
+        },
+        {
+          "id": "E-east",
+          "from": "N-hall",
+          "to": "N-east",
+          "label": "東の扉"
+        },
+        {
+          "id": "E-vault",
+          "from": "N-hall",
+          "to": "N-vault",
+          "label": "北の階段下"
+        },
+        {
+          "id": "E-secret",
+          "from": "N-vault",
+          "to": "N-secret",
+          "label": "壁の隙間"
+        },
+        {
+          "id": "E-down",
+          "from": "N-hall",
+          "to": "N-altar",
+          "label": "下り階段",
+          "toLayerId": "LCave",
+          "ex": 600,
+          "ey": 80
+        }
+      ]
+    },
+    {
+      "id": "LCave",
+      "name": "地下祭壇",
+      "kind": "place",
+      "nodes": [
+        {
+          "id": "N-altar",
+          "name": "祭壇",
+          "x": 80,
+          "y": 160
+        },
+        {
+          "id": "N-crawl",
+          "name": "抜け道",
+          "x": 340,
+          "y": 160
+        }
+      ],
+      "edges": [
+        {
+          "id": "E-crawl",
+          "from": "N-altar",
+          "to": "N-crawl",
+          "label": "暗い穴"
+        },
+        {
+          "id": "E-back",
+          "from": "N-crawl",
+          "to": "N-hall",
+          "label": "広間へ戻る",
+          "toLayerId": "L1F",
+          "ex": 520,
+          "ey": 80
+        }
+      ]
+    }
+  ],
+  "start": {
+    "layerId": "L1F",
+    "nodeId": "N-ent"
+  }
+}

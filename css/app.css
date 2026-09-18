@@ -251,6 +251,11 @@ button.ghost.danger:hover { border-color: var(--danger); color: var(--danger); }
   background: #2a2318;
 }
 
+#app.is-flow .tool[data-kind="grid"] { display: none; }
+#app.is-flow .help-grid { display: none; }
+#app:not(.is-flow) .help-flow { display: none; }
+.kind-actions { margin: 0 0 8px; }
+
 .check-row {
   display: flex;
   align-items: center;

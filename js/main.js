@@ -3,6 +3,7 @@ import {
   CELL_SIZE,
   DIRS,
   DOOR_LOOKS,
+  FLOW_NODE,
   STAIR_STYLES,
   bakeRegions,
   bakeWorld,
@@ -11,8 +12,11 @@ import {
   cellsInRect,
   cloneWorld,
   countDoorsWithNum,
+  createDefaultFlowWorld,
   createDefaultWorld,
+  createEmptyFlowWorld,
   createEmptyWorld,
+  createFlowLayer,
   createLayer,
   currentLayer,
   doorInFront,
@@ -22,9 +26,15 @@ import {
   exportMapJson,
   fillRect,
   findDoor,
+  flowEdgeDest,
+  flowNodeAt,
+  flowNodeRect,
   getDoorBetween,
   getLayer,
+  hitFlowEdge,
+  hitFlowNode,
   isDoorOpen,
+  isFlowWorld,
   isSecretDoor,
   isSweepDoor,
   isWalkable,
@@ -36,8 +46,13 @@ import {
   parseDoorNum,
   parseGlyph,
   placeDoor,
+  placeFlowEdge,
+  placeFlowNode,
   placeObject,
   placeStairs,
+  playFlowChoices,
+  removeFlowEdge,
+  removeFlowNode,
   removeObject,
   resetPlay,
   resizeLayer,
@@ -47,6 +62,7 @@ import {
   setMark,
   stairsAt,
   topObjectAt,
+  travelFlowEdge,
 } from './world.js';
 import { cellAtWorld, drawMinimap, minimapBoxSize, render, screenToWorld } from './render.js';
 import {
@@ -93,6 +109,9 @@ let stairsDraft = { style: 'up' };
 let markDraft = '1';
 let objectDraft = { kind: 'hole', shape: 'rect' };
 let objectPaint = null;
+let pendingEdge = null;
+let nodeDrag = null;
+let kindPick = null;
 let undoStack = [];
 let redoStack = [];
 let saveTimer = 0;
@@ -146,8 +165,31 @@ function layer() {
 
 function centerCamera() {
   const l = layer();
+  if (isFlowWorld(world)) {
+    const node = flowNodeAt(l, world.start?.nodeId) || l.nodes?.[0] || null;
+    if (node) {
+      const r = flowNodeRect(node);
+      cam.x = r.x + r.w / 2;
+      cam.y = r.y + r.h / 2;
+    } else {
+      cam.x = 320;
+      cam.y = 240;
+    }
+    return;
+  }
   cam.x = (l.width * CELL_SIZE) / 2;
   cam.y = (l.height * CELL_SIZE) / 2;
+}
+
+function syncKindChrome() {
+  const flow = isFlowWorld(world);
+  document.getElementById('app')?.classList.toggle('is-flow', flow);
+  if (flow && ['door', 'stairs', 'mark', 'hole', 'bridge'].includes(tool)) {
+    tool = 'select';
+    for (const b of document.querySelectorAll('.tool')) {
+      b.classList.toggle('is-active', b.dataset.tool === tool);
+    }
+  }
 }
 
 function toast(msg) {
@@ -225,7 +267,10 @@ function refreshLayers() {
     btn.type = 'button';
     btn.className = 'layer' + (l.id === layerId ? ' is-active' : '');
     const kind = l.kind === 'place' ? '別の場所' : '階層';
-    btn.innerHTML = `${escapeHtml(l.name)}<small>${kind}　${l.width}×${l.height}</small>`;
+    const meta = isFlowWorld(world)
+      ? `${kind}　${(l.nodes || []).length}部屋`
+      : `${kind}　${l.width}×${l.height}`;
+    btn.innerHTML = `${escapeHtml(l.name)}<small>${meta}</small>`;
     btn.addEventListener('click', () => {
       layerId = l.id;
       selection = null;
@@ -246,18 +291,25 @@ function refreshLayers() {
         pushUndo();
         world.layers = world.layers.filter((x) => x.id !== l.id);
         for (const other of world.layers) {
-          for (const s of other.stairs) {
+          for (const s of other.stairs || []) {
             if (s.targetLayerId === l.id) {
               s.targetLayerId = null;
             }
           }
+          if (Array.isArray(other.edges)) {
+            other.edges = other.edges.filter((e) => e.toLayerId !== l.id);
+          }
         }
         if (world.start.layerId === l.id) {
           const first = world.layers[0];
-          const walk = first.cells.flatMap((row, y) => row.map((t, x) => (t ? { x, y } : null))).filter(Boolean)[0];
           world.start.layerId = first.id;
-          world.start.x = walk ? walk.x : 0;
-          world.start.y = walk ? walk.y : 0;
+          if (isFlowWorld(world)) {
+            world.start.nodeId = first.nodes[0]?.id || null;
+          } else {
+            const walk = first.cells.flatMap((row, y) => row.map((t, x) => (t ? { x, y } : null))).filter(Boolean)[0];
+            world.start.x = walk ? walk.x : 0;
+            world.start.y = walk ? walk.y : 0;
+          }
         }
         if (layerId === l.id) layerId = world.layers[0].id;
         bakeWorld(world);
@@ -284,6 +336,25 @@ function refreshProps() {
   const l = layer();
   if (mode === 'play') {
     propsTitle.textContent = '探索状況';
+    const here = getLayer(world, world.play.layerId);
+    if (isFlowWorld(world)) {
+      const node = flowNodeAt(here, world.play.nodeId);
+      const choices = playFlowChoices(world);
+      const revealed = (world.play.revealed[here.id] || []).length;
+      const list = choices.map((e, i) => {
+        const dest = flowEdgeDest(world, here, e);
+        const name = dest.node && dest.kind === 'node' ? dest.node.name : (getLayer(world, e.toLayerId || here.id)?.name || '？');
+        const hidden = dest.kind === 'portal' || (dest.node && !(world.play.revealed[dest.layer?.id || here.id] || []).includes(dest.node.id));
+        return `<p class="muted">${i + 1}. ${escapeHtml(e.label || '進む')} → ${hidden ? '？' : escapeHtml(name)}</p>`;
+      }).join('') || '<p class="muted">ここから伸びる道はありません。</p>';
+      propsEl.innerHTML = `
+        <p class="muted">現在地　${escapeHtml(here.name)}　${escapeHtml(node?.name || '？')}</p>
+        <p class="muted">このレイヤーで解除した部屋　${revealed}</p>
+        ${list}
+        <p class="muted">スタート部屋から探索が始まります。マスクの外れた部屋から伸びる矢印（道）も開示されます。先の部屋は入るまで名前が見えません。</p>
+      `;
+      return;
+    }
     const revealed = (world.play.revealed[l.id] || []).length;
     propsEl.innerHTML = `
       <p class="muted">現在地　${escapeHtml(getLayer(world, world.play.layerId).name)}　(${world.play.x}, ${world.play.y})</p>
@@ -304,6 +375,106 @@ function refreshProps() {
       pendingLink = null;
       refreshProps();
     };
+    return;
+  }
+
+  if (isFlowWorld(world) && selection?.type === 'node') {
+    const n = selection.node;
+    propsTitle.textContent = '部屋';
+    propsEl.innerHTML = `
+      <p class="muted">大きさのない部屋です。名前だけがマップに出ます。ここから伸ばした矢印が、プレイ時のすすめる道になります。</p>
+      <label class="field">名前<input type="text" id="node-name" value="${escapeHtml(n.name)}" /></label>
+      <button type="button" class="btn" id="node-start">開始部屋にする</button>
+      <button type="button" class="btn" id="del-node">この部屋を削除</button>
+    `;
+    propsEl.querySelector('#node-name').onchange = (e) => {
+      pushUndo();
+      n.name = e.target.value.trim() || n.name;
+      markDirty();
+      refreshProps();
+    };
+    propsEl.querySelector('#node-start').onclick = () => {
+      pushUndo();
+      world.start = { layerId, nodeId: n.id };
+      markDirty();
+      toast('開始部屋を更新しました');
+      refreshProps();
+    };
+    propsEl.querySelector('#del-node').onclick = () => deleteSelection();
+    return;
+  }
+
+  if (isFlowWorld(world) && selection?.type === 'edge') {
+    const e = selection.edge;
+    const destOpts = (getLayer(world, e.toLayerId || layerId).nodes || []).map((n) =>
+      `<option value="${n.id}" ${e.to === n.id ? 'selected' : ''}>${escapeHtml(n.name)}</option>`
+    ).join('');
+    const layerOpts = world.layers.map((ly) =>
+      `<option value="${ly.id}" ${(e.toLayerId || layerId) === ly.id ? 'selected' : ''}>${escapeHtml(ly.name)}</option>`
+    ).join('');
+    propsTitle.textContent = '道';
+    propsEl.innerHTML = `
+      <p class="muted">矢印は一方通行の道です。プレイでは今いる部屋から伸びている矢印だけが進める選択肢になります。</p>
+      <label class="field">表示名<input type="text" id="edge-label" value="${escapeHtml(e.label || '')}" placeholder="奥へ進む" /></label>
+      <label class="field">行き先のレイヤー
+        <select id="edge-layer">${layerOpts}</select>
+      </label>
+      <label class="field">行き先の部屋
+        <select id="edge-to">${destOpts}</select>
+      </label>
+      <button type="button" class="btn" id="edge-new-floor">新しい階層へつなぐ</button>
+      <button type="button" class="btn" id="del-edge">この道を削除</button>
+    `;
+    propsEl.querySelector('#edge-label').onchange = (ev) => {
+      pushUndo();
+      e.label = ev.target.value;
+      markDirty();
+    };
+    propsEl.querySelector('#edge-layer').onchange = (ev) => {
+      const destL = getLayer(world, ev.target.value);
+      const dest = destL.nodes[0];
+      if (!dest) {
+        toast('先に行き先レイヤーへ部屋を置いてください');
+        refreshProps();
+        return;
+      }
+      pushUndo();
+      e.to = dest.id;
+      if (destL.id === layerId) delete e.toLayerId;
+      else {
+        e.toLayerId = destL.id;
+        const src = flowNodeAt(l, e.from);
+        if (src && !Number.isFinite(e.ex)) {
+          e.ex = src.x + FLOW_NODE.w + 90;
+          e.ey = src.y + FLOW_NODE.h / 2;
+        }
+      }
+      markDirty();
+      refreshProps();
+    };
+    propsEl.querySelector('#edge-to').onchange = (ev) => {
+      pushUndo();
+      e.to = ev.target.value;
+      markDirty();
+    };
+    propsEl.querySelector('#edge-new-floor').onclick = () => {
+      pushUndo();
+      const n = world.layers.filter((x) => x.kind === 'floor').length + 1;
+      const nl = createFlowLayer({ name: `${n}階`, kind: 'floor' });
+      const src = flowNodeAt(l, e.from);
+      const dest = placeFlowNode(nl, 80, 180, { name: '入口' });
+      world.layers.push(nl);
+      e.to = dest.id;
+      e.toLayerId = nl.id;
+      if (src) {
+        e.ex = src.x + FLOW_NODE.w + 90;
+        e.ey = src.y + FLOW_NODE.h / 2;
+      }
+      markDirty();
+      refreshAll();
+      toast(`${nl.name} を追加して接続しました`);
+    };
+    propsEl.querySelector('#del-edge').onclick = () => deleteSelection();
     return;
   }
 
@@ -650,17 +821,50 @@ function refreshProps() {
   }
 
   const toolsHelp = {
-    select: '扉・階段・文字・穴・橋をクリックして編集します。Delete で削除、Ctrl+Z で元に戻します。',
-    path: 'ドラッグして通路を描きます。同じ通路が扉で区切られていない限り、進入時にまとめて開示されます。',
-    room: 'ドラッグして矩形の部屋を置きます。部屋はひとつの区画としてマスク解除されます。',
-    spawn: 'プレイ開始位置をクリックして指定します。穴だけのマスには置けません。',
+    select: isFlowWorld(world)
+      ? '部屋や矢印をクリックして編集します。部屋はドラッグで動かせます。Delete で削除、Ctrl+Z で元に戻します。'
+      : '扉・階段・文字・穴・橋をクリックして編集します。Delete で削除、Ctrl+Z で元に戻します。',
+    path: isFlowWorld(world)
+      ? '部屋をクリックして矢印の始点にし、次に行き先の部屋（または空白）をクリックします。空白なら新しい部屋も置きます。'
+      : 'ドラッグして通路を描きます。同じ通路が扉で区切られていない限り、進入時にまとめて開示されます。',
+    room: isFlowWorld(world)
+      ? 'クリックした位置に、名前だけの部屋を置きます。大きさはありません。'
+      : 'ドラッグして矩形の部屋を置きます。部屋はひとつの区画としてマスク解除されます。',
+    spawn: isFlowWorld(world) ? '開始する部屋をクリックして指定します。' : 'プレイ開始位置をクリックして指定します。穴だけのマスには置けません。',
     mark: 'クリックして1文字を置く。キー入力でも文字を変えられます。',
     hole: 'ドラッグして穴を置く。穴の上は歩けません。橋を重ねると歩けます。',
     bridge: 'ドラッグして橋を置く。穴の上に重ねて使います。',
-    erase: 'ドラッグしてマスを空にします。そのマスの階段・文字・オブジェクトや隣接する扉も消えます。',
+    erase: isFlowWorld(world) ? '部屋や矢印をクリックして消します。' : 'ドラッグしてマスを空にします。そのマスの階段・文字・オブジェクトや隣接する扉も消えます。',
   };
 
   propsTitle.textContent = 'レイヤー';
+  if (isFlowWorld(world)) {
+    propsEl.innerHTML = `
+      <p class="muted">${toolsHelp[tool] || ''}</p>
+      <label class="field">名前<input type="text" id="ly-name" value="${escapeHtml(l.name)}" /></label>
+      <label class="field">種類
+        <select id="ly-kind">
+          <option value="floor" ${l.kind === 'floor' ? 'selected' : ''}>階層</option>
+          <option value="place" ${l.kind === 'place' ? 'selected' : ''}>別の場所</option>
+        </select>
+      </label>
+      <p class="muted">ホイールで拡大、Space+ドラッグまたは中ボタンで移動。部屋はマスではなく名前だけの箱です。</p>
+    `;
+    propsEl.querySelector('#ly-name').onchange = (e) => {
+      pushUndo();
+      l.name = e.target.value || l.name;
+      refreshLayers();
+      markDirty();
+    };
+    propsEl.querySelector('#ly-kind').onchange = (e) => {
+      pushUndo();
+      l.kind = e.target.value;
+      refreshLayers();
+      markDirty();
+    };
+    return;
+  }
+
   propsEl.innerHTML = `
     <p class="muted">${toolsHelp[tool] || ''}</p>
     <label class="field">名前<input type="text" id="ly-name" value="${escapeHtml(l.name)}" /></label>
@@ -738,7 +942,20 @@ function linkNewLayer(stairs, kind) {
 
 function hintText() {
   if (isShareViewer()) return 'ホストの画面を表示中';
-  if (mode === 'play') return 'WASD 移動　F 扉　Esc 戻る';
+  if (mode === 'play') {
+    return isFlowWorld(world) ? '矢印または 1〜9 で進む　Esc 戻る' : 'WASD 移動　F 扉　Esc 戻る';
+  }
+  if (isFlowWorld(world)) {
+    const map = {
+      select: 'クリックで選択　ドラッグで部屋を移動　Delete 削除',
+      path: pendingEdge ? '行き先の部屋か空白をクリック' : '始点の部屋をクリックして矢印を引く',
+      room: 'クリックで名前だけの部屋を置く',
+      spawn: 'クリックで開始部屋',
+      erase: '部屋や矢印をクリックして消す',
+    };
+    const pos = hover?.node ? `　${hover.node.name}` : '';
+    return (map[tool] || '') + pos;
+  }
   const map = {
     select: 'クリックで選択　Delete 削除　Ctrl+Z 取り消し',
     path: 'ドラッグで道を描く',
@@ -765,6 +982,7 @@ function refreshBadge() {
 }
 
 function refreshAll() {
+  syncKindChrome();
   refreshLayers();
   refreshProps();
   refreshHint();
@@ -786,13 +1004,15 @@ function showBoot() {
   heldMove = null;
   selection = null;
   pendingLink = null;
+  pendingEdge = null;
+  nodeDrag = null;
   dragRect = null;
   objectPaint = null;
   refreshHint();
 }
 
-function startCreate() {
-  world = createEmptyWorld();
+function startCreate(kind = 'grid') {
+  world = kind === 'flow' ? createEmptyFlowWorld() : createEmptyWorld();
   layerId = world.start.layerId;
   undoStack = [];
   redoStack = [];
@@ -800,7 +1020,17 @@ function startCreate() {
   centerCamera();
   setMode('create');
   markDirty();
-  toast('白紙のマップを開きました');
+  toast(kind === 'flow' ? 'フローチャートの白紙を開きました' : '白紙のマップを開きました');
+}
+
+function openKindModal(onPick) {
+  kindPick = onPick;
+  document.getElementById('kind-modal').classList.remove('hidden');
+}
+
+function closeKindModal() {
+  kindPick = null;
+  document.getElementById('kind-modal').classList.add('hidden');
 }
 
 function startPlayFromText(text, filename) {
@@ -837,6 +1067,8 @@ function setMode(next) {
   stage.classList.toggle('is-play', mode === 'play');
   selection = null;
   pendingLink = null;
+  pendingEdge = null;
+  nodeDrag = null;
   dragRect = null;
   objectPaint = null;
   if (mode === 'play') {
@@ -876,8 +1108,12 @@ async function exitBrowserFullscreen() {
 }
 
 function setTool(next) {
+  if (isFlowWorld(world) && ['door', 'stairs', 'mark', 'hole', 'bridge'].includes(next)) {
+    next = 'select';
+  }
   tool = next;
   selection = null;
+  pendingEdge = null;
   if (next === 'hole' || next === 'bridge') objectDraft.kind = next;
   for (const b of document.querySelectorAll('.tool')) {
     b.classList.toggle('is-active', b.dataset.tool === tool);
@@ -916,9 +1152,13 @@ function deleteSelection() {
     setMark(l, selection.x, selection.y, '');
   } else if (selection.type === 'object') {
     removeObject(l, selection.object.id);
+  } else if (selection.type === 'node') {
+    removeFlowNode(world, l, selection.node.id);
+  } else if (selection.type === 'edge') {
+    removeFlowEdge(l, selection.edge.id);
   }
   selection = null;
-  bakeRegions(l);
+  if (!isFlowWorld(world)) bakeRegions(l);
   markDirty();
   refreshAll();
 }
@@ -1018,6 +1258,7 @@ function applyShareChrome(nextMode) {
   document.getElementById('mask-preview-row')?.classList.toggle('hidden', playLike);
   document.getElementById('play-hud')?.classList.toggle('hidden', !playLike);
   stage.classList.toggle('is-play', playLike);
+  syncKindChrome();
   refreshHint();
   refreshBadge();
 }
@@ -1079,6 +1320,7 @@ function applyShareSnap(payload, peerId) {
   }
   world = payload.world;
   bakeWorld(world);
+  ensurePlay(world);
   if (seq) appliedMapSeq = seq;
   const playIsFresh = !seq || shareSeqShouldApply(seq, appliedViewSeq);
   if (payload.play && playIsFresh) {
@@ -1284,6 +1526,123 @@ async function startShareViewer() {
   }
 }
 
+function flowPointer(e) {
+  const w = pointerWorld(e);
+  const l = layer();
+  const node = hitFlowNode(l, w.x, w.y);
+  const edge = hitFlowEdge(world, l, w.x, w.y);
+  return { wx: w.x, wy: w.y, node, edge };
+}
+
+function tryTravelEdge(edge) {
+  if (!edge) return false;
+  const destLayer = getLayer(world, edge.toLayerId || world.play.layerId);
+  const destName = flowNodeAt(destLayer, edge.to)?.name || destLayer?.name || '先';
+  if (!travelFlowEdge(world, edge)) return false;
+  followPlayer();
+  refreshBadge();
+  refreshProps();
+  markDirty('view');
+  toast(`${destName} へ進んだ`);
+  return true;
+}
+
+function tryTravelAt(pt) {
+  const l = getLayer(world, world.play.layerId);
+  const choices = playFlowChoices(world);
+  for (const edge of choices) {
+    if (pt.edge && pt.edge.id === edge.id) return tryTravelEdge(edge);
+    const dest = flowEdgeDest(world, l, edge);
+    if (dest?.rect && pt.wx >= dest.rect.x && pt.wy >= dest.rect.y
+      && pt.wx <= dest.rect.x + dest.rect.w && pt.wy <= dest.rect.y + dest.rect.h) {
+      return tryTravelEdge(edge);
+    }
+  }
+  return false;
+}
+
+function placeFlowRoomAt(wx, wy, extras = {}) {
+  const l = layer();
+  const node = placeFlowNode(l, wx - FLOW_NODE.w / 2, wy - FLOW_NODE.h / 2, extras);
+  selection = { type: 'node', node };
+  return node;
+}
+
+function onFlowDown(e) {
+  const pt = flowPointer(e);
+  hover = pt;
+  if (mode === 'play') {
+    tryTravelAt(pt);
+    return;
+  }
+  if (tool === 'select') {
+    if (pt.node) {
+      selection = { type: 'node', node: pt.node };
+      nodeDrag = { id: pt.node.id, ox: pt.wx - pt.node.x, oy: pt.wy - pt.node.y, moved: false };
+    } else if (pt.edge) {
+      selection = { type: 'edge', edge: pt.edge };
+      nodeDrag = null;
+    } else {
+      selection = null;
+      nodeDrag = null;
+    }
+    refreshProps();
+    return;
+  }
+  if (tool === 'room') {
+    pushUndo();
+    placeFlowRoomAt(pt.wx, pt.wy);
+    markDirty();
+    refreshAll();
+    return;
+  }
+  if (tool === 'path') {
+    if (pendingEdge) {
+      pushUndo();
+      let dest = pt.node;
+      if (!dest) dest = placeFlowRoomAt(pt.wx, pt.wy);
+      const edge = placeFlowEdge(layer(), pendingEdge.fromId, dest.id);
+      pendingEdge = null;
+      if (!edge) {
+        undoStack.pop();
+        toast('同じ部屋には道を回せません');
+        return;
+      }
+      selection = { type: 'edge', edge };
+      markDirty();
+      refreshAll();
+      return;
+    }
+    if (!pt.node) {
+      toast('始点の部屋をクリックしてください');
+      return;
+    }
+    pendingEdge = { fromId: pt.node.id, x: pt.wx, y: pt.wy };
+    refreshHint();
+    return;
+  }
+  if (tool === 'spawn') {
+    if (!pt.node) {
+      toast('開始する部屋をクリックしてください');
+      return;
+    }
+    pushUndo();
+    world.start = { layerId, nodeId: pt.node.id };
+    markDirty();
+    toast('開始部屋を更新しました');
+    return;
+  }
+  if (tool === 'erase') {
+    if (pt.node) {
+      selection = { type: 'node', node: pt.node };
+      deleteSelection();
+    } else if (pt.edge) {
+      selection = { type: 'edge', edge: pt.edge };
+      deleteSelection();
+    }
+  }
+}
+
 function onDown(e) {
   if (isShareViewer()) return;
   if (e.button === 1 || spaceDown || e.button === 2) {
@@ -1294,6 +1653,10 @@ function onDown(e) {
     return;
   }
   if (e.button !== 0) return;
+  if (isFlowWorld(world)) {
+    onFlowDown(e);
+    return;
+  }
   const c = clampHover(pointerCell(e));
   hover = c;
   if (mode === 'play') return;
@@ -1420,6 +1783,27 @@ function onMove(e) {
     markShareView();
     return;
   }
+  if (isFlowWorld(world)) {
+    const pt = flowPointer(e);
+    hover = pt;
+    if (pendingEdge) {
+      pendingEdge.x = pt.wx;
+      pendingEdge.y = pt.wy;
+    }
+    if (nodeDrag && mode === 'create') {
+      const n = flowNodeAt(layer(), nodeDrag.id);
+      if (n) {
+        if (!nodeDrag.moved) pushUndo();
+        n.x = pt.wx - nodeDrag.ox;
+        n.y = pt.wy - nodeDrag.oy;
+        nodeDrag.moved = true;
+        markDirty();
+      }
+    }
+    refreshHint();
+    if (mode === 'create') markShareView();
+    return;
+  }
   const c = clampHover(pointerCell(e));
   hover = c;
   refreshHint();
@@ -1453,6 +1837,11 @@ function onUp() {
     lastPan = null;
     stage.classList.remove('is-pan');
   }
+  if (nodeDrag) {
+    if (nodeDrag.moved) refreshAll();
+    nodeDrag = null;
+  }
+  if (isFlowWorld(world)) return;
   if (dragRect) {
     const l = layer();
     const fill = dragRect.fill || 'room';
@@ -1496,6 +1885,17 @@ function onWheel(e) {
 }
 
 function followPlayer() {
+  if (isFlowWorld(world)) {
+    const l = getLayer(world, world.play.layerId);
+    const n = flowNodeAt(l, world.play.nodeId);
+    if (n) {
+      const r = flowNodeRect(n);
+      cam.x = r.x + r.w / 2;
+      cam.y = r.y + r.h / 2;
+    }
+    layerId = world.play.layerId;
+    return;
+  }
   cam.x = world.play.x * CELL_SIZE + CELL_SIZE / 2;
   cam.y = world.play.y * CELL_SIZE + CELL_SIZE / 2;
   layerId = world.play.layerId;
@@ -1616,7 +2016,7 @@ function tick(t) {
     requestAnimationFrame(tick);
     return;
   }
-  if (!isShareViewer() && mode === 'play' && heldMove && t >= moveCooldown) {
+  if (!isShareViewer() && mode === 'play' && heldMove && t >= moveCooldown && !isFlowWorld(world)) {
     tryMove(heldMove);
     moveCooldown = t + 160;
   }
@@ -1630,10 +2030,11 @@ function tick(t) {
       vh,
       hover: mode === 'create' || isShareViewer() ? hover : null,
       selection: mode === 'create' && !isShareViewer() ? selection : null,
-      dragRect: isShareViewer() ? null : dragRect,
-      objectPaint: isShareViewer() ? null : objectPaint,
+      dragRect: isShareViewer() || isFlowWorld(world) ? null : dragRect,
+      objectPaint: isShareViewer() || isFlowWorld(world) ? null : objectPaint,
       useFog: mode === 'play' || maskPreview,
       pendingLink: isShareViewer() ? null : pendingLink,
+      pendingEdge: isShareViewer() ? null : pendingEdge,
     });
     paintMinimap(vw, vh);
   } else {
@@ -1715,7 +2116,23 @@ document.getElementById('btn-create').onclick = () => setMode('create');
 document.getElementById('btn-play').onclick = () => setMode('play');
 document.getElementById('btn-exit-play').onclick = () => showBoot();
 document.getElementById('btn-title').onclick = () => showBoot();
-document.getElementById('boot-create').onclick = () => startCreate();
+document.getElementById('boot-create').onclick = () => {
+  openKindModal((kind) => startCreate(kind));
+};
+document.getElementById('kind-grid').onclick = () => {
+  const fn = kindPick;
+  closeKindModal();
+  if (fn) fn('grid');
+};
+document.getElementById('kind-flow').onclick = () => {
+  const fn = kindPick;
+  closeKindModal();
+  if (fn) fn('flow');
+};
+document.getElementById('kind-cancel').onclick = () => closeKindModal();
+document.getElementById('kind-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'kind-modal') closeKindModal();
+});
 document.getElementById('boot-play').onclick = () => pickPlayFile();
 document.getElementById('boot-file').onchange = (e) => {
   const file = e.target.files && e.target.files[0];
@@ -1796,7 +2213,9 @@ document.getElementById('tool-grid').onclick = (e) => {
 document.getElementById('btn-add-floor').onclick = () => {
   pushUndo();
   const n = world.layers.filter((x) => x.kind === 'floor').length + 1;
-  const nl = createLayer({ name: `${n}階`, kind: 'floor', width: layer().width, height: layer().height });
+  const nl = isFlowWorld(world)
+    ? createFlowLayer({ name: `${n}階`, kind: 'floor' })
+    : createLayer({ name: `${n}階`, kind: 'floor', width: layer().width, height: layer().height });
   world.layers.push(nl);
   layerId = nl.id;
   centerCamera();
@@ -1806,7 +2225,9 @@ document.getElementById('btn-add-floor').onclick = () => {
 document.getElementById('btn-add-place').onclick = () => {
   pushUndo();
   const n = world.layers.filter((x) => x.kind === 'place').length + 1;
-  const nl = createLayer({ name: `場所${n}`, kind: 'place', width: 12, height: 10 });
+  const nl = isFlowWorld(world)
+    ? createFlowLayer({ name: `場所${n}`, kind: 'place' })
+    : createLayer({ name: `場所${n}`, kind: 'place', width: 12, height: 10 });
   world.layers.push(nl);
   layerId = nl.id;
   centerCamera();
@@ -1816,8 +2237,9 @@ document.getElementById('btn-add-place').onclick = () => {
 document.getElementById('btn-reset-play').onclick = () => resetExploration();
 document.getElementById('btn-reset-play-hud').onclick = () => resetExploration();
 document.getElementById('btn-load-sample').onclick = () => {
-  confirmModal('サンプル迷宮に置き換えます。現在のマップは消えます。', () => {
-    world = createDefaultWorld();
+  const flow = isFlowWorld(world);
+  confirmModal(flow ? 'フローチャートのサンプルに置き換えます。現在のマップは消えます。' : 'サンプル迷宮に置き換えます。現在のマップは消えます。', () => {
+    world = flow ? createDefaultFlowWorld() : createDefaultWorld();
     layerId = world.start.layerId;
     undoStack = [];
     centerCamera();
@@ -1827,14 +2249,15 @@ document.getElementById('btn-load-sample').onclick = () => {
   });
 };
 document.getElementById('btn-new-map').onclick = () => {
-  confirmModal('空のマップを新規作成します。保存済みのデータは上書きされます。', () => {
-    world = createEmptyWorld();
+  openKindModal((kind) => {
+    world = kind === 'flow' ? createEmptyFlowWorld() : createEmptyWorld();
     layerId = world.start.layerId;
     undoStack = [];
     centerCamera();
+    setMode('create');
     refreshAll();
     markDirty();
-    toast('新規マップを作成しました');
+    toast(kind === 'flow' ? 'フローチャートを新規作成しました' : '新規マップを作成しました');
   });
 };
 
@@ -1847,6 +2270,7 @@ window.addEventListener('resize', resizeCanvas);
 
 const toolKeys = {
   q: 'select',
+  w: 'path',
   e: 'room',
   r: 'door',
   t: 'stairs',
@@ -1874,6 +2298,10 @@ window.addEventListener('keydown', (e) => {
     }
     if (!document.getElementById('modal').classList.contains('hidden')) {
       document.getElementById('modal').classList.add('hidden');
+      return;
+    }
+    if (!document.getElementById('kind-modal').classList.contains('hidden')) {
+      closeKindModal();
       return;
     }
     if (mode === 'play' && !document.fullscreenElement && !isShareViewer()) {
@@ -1912,10 +2340,21 @@ window.addEventListener('keydown', (e) => {
     }
   }
   if (mode === 'create' && toolKeys[e.key.toLowerCase()]) {
-    setTool(toolKeys[e.key.toLowerCase()]);
+    const next = toolKeys[e.key.toLowerCase()];
+    if (isFlowWorld(world) && ['door', 'stairs', 'mark', 'hole', 'bridge'].includes(next)) return;
+    setTool(next);
     return;
   }
   const map = { w: 'n', a: 'w', s: 's', d: 'e', ArrowUp: 'n', ArrowLeft: 'w', ArrowDown: 's', ArrowRight: 'e' };
+  if (mode === 'play' && isFlowWorld(world)) {
+    const n = e.key >= '1' && e.key <= '9' ? Number(e.key) : 0;
+    if (n && !e.repeat) {
+      e.preventDefault();
+      const edge = playFlowChoices(world)[n - 1];
+      if (edge) tryTravelEdge(edge);
+    }
+    return;
+  }
   if (mode === 'play') {
     const dir = map[e.key] || map[e.key.toLowerCase()];
     if (dir) {
