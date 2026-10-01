@@ -19,8 +19,11 @@ import {
   isFlowNodeRevealed,
   isFlowWorld,
   isSecretDoor,
+  isSlideDoor,
   isSweepDoor,
   isWalkable,
+  shouldShowDoorNum,
+  slideOpenShift,
   isRegionRevealed,
   objectZ,
   outgoingFlowEdges,
@@ -161,7 +164,7 @@ function drawDoor(ctx, door, open, { createMark = false } = {}) {
       ctx.fillText('隠', mx, my - 10);
       ctx.restore();
     }
-    if (createMark || open) drawDoorNum(ctx, door);
+    if (shouldShowDoorNum(createMark)) drawDoorNum(ctx, door);
     return;
   }
 
@@ -204,6 +207,16 @@ function drawDoor(ctx, door, open, { createMark = false } = {}) {
       ctx.lineTo(x0 + w * 0.8, y0 + h - 1.5);
       ctx.stroke();
     }
+    if (door.appearance === 'slide') {
+      ctx.strokeStyle = pal.metal;
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(x0 + 3, y0 + 1.5);
+      ctx.lineTo(x0 + w - 3, y0 + 1.5);
+      ctx.moveTo(x0 + 3, y0 + h - 1.5);
+      ctx.lineTo(x0 + w - 3, y0 + h - 1.5);
+      ctx.stroke();
+    }
   };
 
   const drawPlankV = (x0, y0, w, h) => {
@@ -240,6 +253,16 @@ function drawDoor(ctx, door, open, { createMark = false } = {}) {
       ctx.lineTo(x0 + w - 1.5, y0 + h * 0.8);
       ctx.stroke();
     }
+    if (door.appearance === 'slide') {
+      ctx.strokeStyle = pal.metal;
+      ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(x0 + 1.5, y0 + 3);
+      ctx.lineTo(x0 + 1.5, y0 + h - 3);
+      ctx.moveTo(x0 + w - 1.5, y0 + 3);
+      ctx.lineTo(x0 + w - 1.5, y0 + h - 3);
+      ctx.stroke();
+    }
   };
 
   if (door.side === 'n') {
@@ -247,6 +270,9 @@ function drawDoor(ctx, door, open, { createMark = false } = {}) {
     const w = CS - 12;
     if (!open) {
       drawPlankH(x0, y - 4, w, 8);
+    } else if (isSlideDoor(door)) {
+      const sh = slideOpenShift(door);
+      drawPlankH(x0 + sh.x, y - 4 + sh.y, w, 8);
     } else {
       const hingeX = door.hinge === 'a' ? x + 5 : x + CS - 13;
       const intoSouth = door.swing !== 'n';
@@ -258,6 +284,9 @@ function drawDoor(ctx, door, open, { createMark = false } = {}) {
     const h = CS - 12;
     if (!open) {
       drawPlankV(x - 4, y0, 8, h);
+    } else if (isSlideDoor(door)) {
+      const sh = slideOpenShift(door);
+      drawPlankV(x - 4 + sh.x, y0 + sh.y, 8, h);
     } else {
       const hingeY = door.hinge === 'a' ? y + 5 : y + CS - 13;
       const intoEast = door.swing !== 'w';
@@ -266,11 +295,11 @@ function drawDoor(ctx, door, open, { createMark = false } = {}) {
     }
   }
 
-  if (createMark && isSweepDoor(door)) {
+  if (createMark && (isSweepDoor(door) || isSlideDoor(door))) {
     const mx = door.side === 'n' ? x + CS / 2 : x;
     const my = door.side === 'n' ? y : y + CS / 2;
     ctx.save();
-    ctx.fillStyle = '#c9a44a';
+    ctx.fillStyle = isSlideDoor(door) ? '#8aa0b0' : '#c9a44a';
     ctx.strokeStyle = '#efe7d8';
     ctx.lineWidth = 1.4;
     ctx.beginPath();
@@ -285,10 +314,10 @@ function drawDoor(ctx, door, open, { createMark = false } = {}) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
     ctx.fillStyle = '#efe7d8';
-    ctx.fillText('振', mx, my - 10);
+    ctx.fillText(isSlideDoor(door) ? '滑' : '振', mx, my - 10);
     ctx.restore();
   }
-  drawDoorNum(ctx, door);
+  if (shouldShowDoorNum(createMark)) drawDoorNum(ctx, door);
   ctx.restore();
 }
 
