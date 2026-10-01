@@ -1233,10 +1233,12 @@ function updateShareStatus() {
     const label = hostShareButtonLabel(true);
     if (btn) {
       btn.textContent = label;
+      btn.title = '部屋を離れ、待っている視聴者へ画面を送り直します';
       btn.disabled = shareReconnecting;
     }
     if (hud) {
       hud.textContent = label;
+      hud.title = '部屋を離れ、待っている視聴者へ画面を送り直します';
       hud.disabled = shareReconnecting;
     }
   } else if (shareRole === 'viewer') {
@@ -1252,10 +1254,12 @@ function updateShareStatus() {
     const label = hostShareButtonLabel(false);
     if (btn) {
       btn.textContent = label;
+      btn.title = '今見ている画面を PlayView で配信します';
       btn.disabled = false;
     }
     if (hud) {
       hud.textContent = label;
+      hud.title = '今見ている画面を PlayView で配信します';
       hud.disabled = false;
     }
   }
@@ -1604,6 +1608,7 @@ async function startHosting() {
     return;
   }
   shareRole = 'host';
+  updateShareStatus();
   try {
     await ensureShareLink();
     shareStartedAt = Date.now();
@@ -1616,6 +1621,7 @@ async function startHosting() {
     await copyShareUrl();
   } catch (err) {
     shareRole = null;
+    updateShareStatus();
     toast(`共有を開始できません: ${err.message || err}`);
   }
 }

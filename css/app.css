@@ -100,7 +100,12 @@ body {
   display: flex;
   justify-content: flex-end;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+  min-width: 0;
+}
+.top-actions #btn-share {
+  white-space: nowrap;
 }
 .save-status {
   font-size: 12px;
