@@ -127,12 +127,21 @@ export function shouldFlushMapSnap(now, { dirty, touchedAt, lastSnapAt }) {
   return lastSnapAt > 0 && now - lastSnapAt >= MAP_SNAP_MAX_WAIT_MS;
 }
 
+export const SHARE_BTN_IDLE = '画面を共有';
+export const SHARE_BTN_RECONNECT = '受信側へ再接続';
+export const HOST_RECONNECT_SNAP_DELAYS_MS = [400, 1200];
+
+export function hostShareButtonLabel(isHosting) {
+  return isHosting ? SHARE_BTN_RECONNECT : SHARE_BTN_IDLE;
+}
+
 export function shareWaitMessage(elapsedMs, phase = 'wait') {
   if (phase === 'load') return '接続モジュールを読み込み中';
   if (phase === 'join') return '部屋に接続しています';
+  if (phase === 'rejoin') return 'ホストが再接続しました。画面を待っています';
   if (elapsedMs < 2500) return 'ホストの画面を待っています';
   if (elapsedMs < 8000) return 'ホストを探しています。もう少し待ってください';
-  return 'まだ届きません。ホスト側で「画面を共有」を押しているか確認してください';
+  return 'まだ届きません。ホスト側で「画面を共有」または「受信側へ再接続」を押してください';
 }
 
 export function shouldRetryHandshake(now, lastAt, startedAt = 0) {
