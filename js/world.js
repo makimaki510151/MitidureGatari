@@ -18,6 +18,7 @@ export const DOOR_LOOKS = {
   steel: { name: '鋼鉄扉', fill: '#6d7884', stroke: '#262c32', metal: '#e4eaf0' },
   worn: { name: '古びた扉', fill: '#5a4a36', stroke: '#2a2218', metal: '#8a7a62' },
   sweep: { name: '振れ扉', fill: '#4a3d28', stroke: '#1c1610', metal: '#d4b483' },
+  slide: { name: 'スライド扉', fill: '#3d4a52', stroke: '#14191c', metal: '#c9d4dc' },
   secret: { name: '隠し扉（壁）', fill: '#1a1612', stroke: '#1a1612', metal: '#3d3428' },
 };
 
@@ -27,6 +28,24 @@ export function isSecretDoor(door) {
 
 export function isSweepDoor(door) {
   return !!door && door.appearance === 'sweep' && !isSecretDoor(door);
+}
+
+export function isSlideDoor(door) {
+  return !!door && door.appearance === 'slide' && !isSecretDoor(door);
+}
+
+export function shouldShowDoorNum(createMark) {
+  return !!createMark;
+}
+
+/** Pixel shift of an open sliding door along the wall (same orientation as closed). */
+export function slideOpenShift(door) {
+  if (!isSlideDoor(door)) return { x: 0, y: 0 };
+  const along = CELL_SIZE - 12;
+  if (door.side === 'n') {
+    return door.hinge === 'b' ? { x: along, y: 0 } : { x: -along, y: 0 };
+  }
+  return door.hinge === 'b' ? { x: 0, y: along } : { x: 0, y: -along };
 }
 
 export const STAIR_STYLES = {
@@ -1060,6 +1079,7 @@ export function createDefaultWorld() {
   placeDoor(f1, 17, 6, 'w', { id: 'D-east', appearance: 'ornate', swing: 'e', hinge: 'b' });
   placeDoor(f1, 9, 2, 'n', { id: 'D-north', appearance: 'secret', swing: 'n', hinge: 'a', hidden: true });
   placeDoor(f1, 10, 10, 'w', { id: 'D-sweep', appearance: 'sweep', swing: 'e', hinge: 'a' });
+  placeDoor(f1, 11, 10, 'w', { id: 'D-slide', appearance: 'slide', swing: 'e', hinge: 'a' });
 
   const f2 = createLayer({ id: 'L2F', name: '2階', kind: 'floor', width: 16, height: 12 });
   fillRect(f2, 2, 2, 8, 7, CELL.ROOM);

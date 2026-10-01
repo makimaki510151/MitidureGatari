@@ -40,6 +40,7 @@ import {
   isFlowNodeRevealed,
   isFlowWorld,
   isSecretDoor,
+  isSlideDoor,
   isSweepDoor,
   isWalkable,
   markAt,
@@ -503,38 +504,43 @@ function refreshProps() {
     const looks = Object.entries(DOOR_LOOKS).map(([k, v]) =>
       `<button type="button" class="swatch ${d.appearance === k ? 'is-active' : ''}" data-look="${k}" style="--sw:${v.fill}">${v.name}</button>`
     ).join('');
+    const slide = isSlideDoor(d);
     const swings = d.side === 'n'
       ? [['n', '北へ開く'], ['s', '南へ開く']]
       : [['w', '西へ開く'], ['e', '東へ開く']];
     const hinges = d.side === 'n'
-      ? [['a', '西寄り（左）'], ['b', '東寄り（右）']]
-      : [['a', '北寄り（上）'], ['b', '南寄り（下）']];
+      ? [['a', slide ? '西へ滑る' : '西寄り（左）'], ['b', slide ? '東へ滑る' : '東寄り（右）']]
+      : [['a', slide ? '北へ滑る' : '北寄り（上）'], ['b', slide ? '南へ滑る' : '南寄り（下）']];
     const n = doorNum(d);
     const linked = n !== null ? countDoorsWithNum(world, n) : 0;
     propsEl.innerHTML = `
       <p class="muted">位置　(${d.x}, ${d.y})　${d.side === 'n' ? '南北の境' : '東西の境'}</p>
-      <label class="field">番号（空欄で独立）
+      ${mode === 'create' ? `<label class="field">番号（空欄で独立）
         <input type="number" id="door-num" min="0" max="999" placeholder="なし" value="${n === null ? '' : n}" />
       </label>
-      ${n !== null ? `<p class="muted">同じ ${n} 番の扉は全レイヤーで ${linked} 枚。F で1枚動かすと、同じ番号はすべて動きます。初期で開いている扉は閉じ、閉じている扉は開きます。</p>` : '<p class="muted">番号を付けると同じ番号の扉が、階層・場所をまたいで開閉を共有します。</p>'}
+      ${n !== null ? `<p class="muted">同じ ${n} 番の扉は全レイヤーで ${linked} 枚。F で1枚動かすと、同じ番号はすべて動きます。初期で開いている扉は閉じ、閉じている扉は開きます。番号はクリエイト中だけ地図に出ます。</p>` : '<p class="muted">番号を付けると同じ番号の扉が、階層・場所をまたいで開閉を共有します。番号はクリエイト中だけ地図に出ます。</p>'}` : ''}
       <label class="field">見た目</label>
       <div class="swatches" id="looks">${looks}</div>
-      <label class="field">開く方向</label>
-      <div class="choice" id="swings">${swings.map(([k, n]) => `<button type="button" data-k="${k}" class="${d.swing === k ? 'is-active' : ''}">${n}</button>`).join('')}</div>
-      <label class="field">蝶番</label>
+      ${slide ? '' : `<label class="field">開く方向</label>
+      <div class="choice" id="swings">${swings.map(([k, n]) => `<button type="button" data-k="${k}" class="${d.swing === k ? 'is-active' : ''}">${n}</button>`).join('')}</div>`}
+      <label class="field">${slide ? 'スライド方向' : '蝶番'}</label>
       <div class="choice" id="hinges">${hinges.map(([k, n]) => `<button type="button" data-k="${k}" class="${d.hinge === k ? 'is-active' : ''}">${n}</button>`).join('')}</div>
       ${isSweepDoor(d) ? '<p class="muted">開くと開いた側の通路を塞ぎ、その辺でも同じ扉として開閉できます。</p>' : ''}
+      ${slide ? '<p class="muted">開くと壁に沿って横へ滑ります。開いたあとも通路は塞ぎません。</p>' : ''}
       <label class="check-row"><input type="checkbox" id="door-hidden" ${isSecretDoor(d) ? 'checked' : ''}/><span>隠し扉（壁に擬態）</span></label>
       <label class="check-row"><input type="checkbox" id="door-open" ${d.defaultOpen ? 'checked' : ''}/><span>初期状態で開いている</span></label>
       <button type="button" class="btn" id="del-door">この扉を削除</button>
     `;
-    propsEl.querySelector('#door-num').onchange = (e) => {
-      pushUndo();
-      d.num = parseDoorNum(e.target.value);
-      doorDraft.num = d.num;
-      markDirty();
-      refreshProps();
-    };
+    const numInput = propsEl.querySelector('#door-num');
+    if (numInput) {
+      numInput.onchange = (e) => {
+        pushUndo();
+        d.num = parseDoorNum(e.target.value);
+        doorDraft.num = d.num;
+        markDirty();
+        refreshProps();
+      };
+    }
     propsEl.querySelector('#looks').onclick = (e) => {
       const b = e.target.closest('[data-look]');
       if (!b) return;
@@ -546,15 +552,18 @@ function refreshProps() {
       markDirty();
       refreshProps();
     };
-    propsEl.querySelector('#swings').onclick = (e) => {
-      const b = e.target.closest('button');
-      if (!b) return;
-      pushUndo();
-      d.swing = b.dataset.k;
-      doorDraft.swing = d.swing;
-      markDirty();
-      refreshProps();
-    };
+    const swingEl = propsEl.querySelector('#swings');
+    if (swingEl) {
+      swingEl.onclick = (e) => {
+        const b = e.target.closest('button');
+        if (!b) return;
+        pushUndo();
+        d.swing = b.dataset.k;
+        doorDraft.swing = d.swing;
+        markDirty();
+        refreshProps();
+      };
+    }
     propsEl.querySelector('#hinges').onclick = (e) => {
       const b = e.target.closest('button');
       if (!b) return;
@@ -707,7 +716,7 @@ function refreshProps() {
       `<button type="button" class="swatch ${doorDraft.appearance === k ? 'is-active' : ''}" data-look="${k}" style="--sw:${v.fill}">${v.name}</button>`
     ).join('');
     propsEl.innerHTML = `
-      <p class="muted">歩けるマス同士の境界付近をクリックすると扉が入ります。閉じている間は通行できません。隠し扉は壁と同じ見た目になります。振れ扉は開くと開いた側の通路を塞ぎ、その辺でも同じ扉として開閉できます。番号を付けると同じ番号の扉が階層・場所をまたいで開閉を共有します。</p>
+      <p class="muted">歩けるマス同士の境界付近をクリックすると扉が入ります。閉じている間は通行できません。隠し扉は壁と同じ見た目になります。振れ扉は開くと開いた側の通路を塞ぎ、その辺でも同じ扉として開閉できます。スライド扉は壁に沿って滑り、開いても通路は塞ぎません。番号を付けると同じ番号の扉が階層・場所をまたいで開閉を共有します。番号はクリエイト中だけ地図に出ます。</p>
       <label class="field">番号（空欄で独立）
         <input type="number" id="draft-num" min="0" max="999" placeholder="なし" value="${doorDraft.num === null || doorDraft.num === undefined ? '' : doorDraft.num}" />
       </label>
@@ -2109,18 +2118,14 @@ function interactDoor() {
   if (!door) return;
   const open = !isDoorOpen(world, door);
   setDoorOpen(world, door, open);
-  const n = doorNum(door);
-  if (n !== null) {
-    toast(`${n}番の扉を動かした`);
-    markDirty('view');
-    return;
-  }
   const secret = isSecretDoor(door);
   toast(isSweepDoor(door)
     ? (open ? '振れ扉を開けた' : '振れ扉を閉じた')
-    : secret
-      ? (open ? '隠し扉を開けた' : '隠し扉を閉じた')
-      : (open ? '扉を開けた' : '扉を閉じた'));
+    : isSlideDoor(door)
+      ? (open ? 'スライド扉を開けた' : 'スライド扉を閉じた')
+      : secret
+        ? (open ? '隠し扉を開けた' : '隠し扉を閉じた')
+        : (open ? '扉を開けた' : '扉を閉じた'));
   markDirty('view');
 }
 

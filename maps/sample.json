@@ -418,6 +418,17 @@
           "hinge": "a",
           "defaultOpen": false,
           "hidden": false
+        },
+        {
+          "id": "D-slide",
+          "x": 11,
+          "y": 10,
+          "side": "w",
+          "appearance": "slide",
+          "swing": "e",
+          "hinge": "a",
+          "defaultOpen": false,
+          "hidden": false
         }
       ],
       "stairs": [
