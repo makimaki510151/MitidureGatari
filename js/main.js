@@ -73,6 +73,8 @@ import {
 import { cellAtWorld, drawMinimap, minimapBoxSize, render, screenToWorld } from './render.js';
 import {
   connectShareRoom,
+  HOST_RECONNECT_SNAP_DELAYS_MS,
+  hostShareButtonLabel,
   nextCamZoom,
   packPlay,
   parseShareRoute,
@@ -145,6 +147,7 @@ let sharePendingAck = new Set();
 let shareWantTimer = 0;
 let shareViewerStartedAt = 0;
 let shareHostStartedAt = 0;
+let shareReconnecting = false;
 let viewerOwnZoom = false;
 
 function isShareViewer() {
@@ -1236,18 +1239,38 @@ function updateShareStatus() {
       el.hidden = false;
       el.textContent = text;
     }
-    if (btn) btn.textContent = '共有URLをコピー';
-    if (hud) hud.textContent = '共有URLをコピー';
+    const label = hostShareButtonLabel(true);
+    if (btn) {
+      btn.textContent = label;
+      btn.title = '部屋を離れ、待っている視聴者へ画面を送り直します';
+      btn.disabled = shareReconnecting;
+    }
+    if (hud) {
+      hud.textContent = label;
+      hud.title = '部屋を離れ、待っている視聴者へ画面を送り直します';
+      hud.disabled = shareReconnecting;
+    }
   } else if (shareRole === 'viewer') {
     if (el) {
       el.hidden = false;
       el.textContent = '視聴中';
     }
-  } else if (el) {
-    el.hidden = true;
-    el.textContent = '';
-    if (btn) btn.textContent = '画面を共有';
-    if (hud) hud.textContent = '画面を共有';
+  } else {
+    if (el) {
+      el.hidden = true;
+      el.textContent = '';
+    }
+    const label = hostShareButtonLabel(false);
+    if (btn) {
+      btn.textContent = label;
+      btn.title = '今見ている画面を PlayView で配信します';
+      btn.disabled = false;
+    }
+    if (hud) {
+      hud.textContent = label;
+      hud.title = '今見ている画面を PlayView で配信します';
+      hud.disabled = false;
+    }
   }
 }
 
@@ -1446,7 +1469,10 @@ async function ensureShareLink() {
     },
     onHello: (data, peerId) => {
       if (data?.role === 'host' && shareRole === 'viewer') {
-        if (!shareHostPeer) shareHostPeer = peerId;
+        shareHostPeer = peerId;
+        if (data.reconnect && !appliedMapSeq) {
+          setShareWait(true, shareWaitMessage(0, 'rejoin'));
+        }
         shareLink?.sendWant({ t: Date.now() });
       }
       if (shareRole === 'host' && data?.role === 'viewer' && peerId) {
@@ -1539,6 +1565,47 @@ async function copyShareUrl() {
   }
 }
 
+function scheduleHostSnaps() {
+  sendSnapToPeer();
+  for (const delay of HOST_RECONNECT_SNAP_DELAYS_MS) {
+    setTimeout(() => {
+      if (shareRole === 'host' && shareLink) sendSnapToPeer();
+    }, delay);
+  }
+}
+
+async function reconnectHosting() {
+  if (shareRole !== 'host' || shareReconnecting) return;
+  shareReconnecting = true;
+  updateShareStatus();
+  toast('受信側へ再接続しています…');
+  try {
+    shareLink?.leave();
+  } catch {
+    /* ignore */
+  }
+  shareLink = null;
+  sharePendingAck = new Set();
+  sharePeerCount = 0;
+  lastShareSnapAt = 0;
+  shareWorldDirty = false;
+  shareViewDirty = false;
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  try {
+    await ensureShareLink();
+    shareStartedAt = Date.now();
+    shareHostStartedAt = performance.now();
+    shareLink.sendHello({ role: 'host', started: shareStartedAt, reconnect: true });
+    scheduleHostSnaps();
+    toast('受信側へ再接続しました。待っている視聴者に画面を送ります');
+  } catch (err) {
+    toast(`再接続できません: ${err.message || err}`);
+  } finally {
+    shareReconnecting = false;
+    updateShareStatus();
+  }
+}
+
 async function startHosting() {
   if (isShareViewer()) return;
   if (mode === 'boot') {
@@ -1546,10 +1613,11 @@ async function startHosting() {
     return;
   }
   if (shareRole === 'host') {
-    await copyShareUrl();
+    await reconnectHosting();
     return;
   }
   shareRole = 'host';
+  updateShareStatus();
   try {
     await ensureShareLink();
     shareStartedAt = Date.now();
@@ -1557,11 +1625,12 @@ async function startHosting() {
     shareWorldDirty = false;
     shareViewDirty = false;
     shareLink.sendHello({ role: 'host', started: shareStartedAt });
-    sendSnapToPeer();
+    scheduleHostSnaps();
     updateShareStatus();
     await copyShareUrl();
   } catch (err) {
     shareRole = null;
+    updateShareStatus();
     toast(`共有を開始できません: ${err.message || err}`);
   }
 }
